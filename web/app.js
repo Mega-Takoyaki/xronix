@@ -43,6 +43,7 @@ async function act(fn, okMsg) {
   try { const r = await fn(); if (okMsg) toast(okMsg); return r; }
   catch (e) { toast(e.message, true); }
 }
+const fmtSec = (iso) => (iso ? new Date(iso).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—");
 const fmt = (iso) => (iso ? new Date(iso).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
 function weighted(s) { let n = 0; for (const ch of s) n += /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹯＀-｠￠-￦]/.test(ch) || ch.codePointAt(0) > 0x1F000 ? 2 : 1; return n; }
 const hasUrl = (s) => /(https?:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|jp|co|io|me|ly|to|app|xyz|info|biz|gl|cc|tv|fm)\b)/i.test(s);
@@ -58,7 +59,7 @@ async function refreshStatus() {
   $("#chips").replaceChildren(...[
     h("span", { class: "chip " + (status.x_connected ? "good" : "bad") }, status.x_connected ? `X: @${status.username}` : "X: 未接続"),
     h("span", { class: "chip" }, `本日の送信 ${status.sent_today}/${status.daily_limit}`),
-    h("span", { class: "chip " + (status.job_enabled ? "good" : "") }, status.job_enabled ? `定期処理: 次回 ${fmt(status.next_due)}` : "定期処理: 停止中"),
+    h("span", { class: "chip " + (status.job_enabled ? "good" : "") }, status.job_enabled ? `定期処理: 次回 ${fmtSec(status.next_due)}` : "定期処理: 停止中"),
     status.unknown ? h("span", { class: "chip bad" }, `結果不明 ${status.unknown}件`) : null,
   ].filter(Boolean));
   $("#n-queue").textContent = status.pending || "";
@@ -159,27 +160,44 @@ async function renderTemplates() {
 }
 
 // ---------- ジョブ ----------
+const TRIGGER = { manual: "手動", schedule: "定期", watchdog: "見守り" };
 async function renderJobs() {
   const d = await api("GET", "/api/jobs");
   const s = d.settings;
-  const interval = h("select", {}, [15, 30, 45, 60, 90, 120, 240, 720, 1440].map((n) => h("option", { value: n, selected: n === s.interval_minutes }, n >= 60 ? `${n / 60}時間${n % 60 ? n % 60 + "分" : ""}`.replace("1時間", "1時間") : `${n}分`)));
-  if (![15, 30, 45, 60, 90, 120, 240, 720, 1440].includes(s.interval_minutes)) interval.append(h("option", { value: s.interval_minutes, selected: true }, `${s.interval_minutes}分`));
   const enabled = h("input", { type: "checkbox", checked: s.enabled });
+  const interval = h("input", { type: "number", min: 1, max: 999, step: 1 }); interval.value = s.interval_minutes;
+  const jitter = h("input", { type: "number", min: 0, max: 99, step: 1 }); jitter.value = s.jitter_minutes;
   const pages = h("input", { type: "number", min: 1, max: 10, value: s.max_pages }); pages.value = s.max_pages;
   const initial = h("select", {}, [["from_now", "現在地点から始める（過去分は取り込まない）"], ["backfill", "過去のメンションも取り込む"]].map(([v, t]) => h("option", { value: v, selected: v === s.initial_mode }, t)));
+  const preview = h("div", { class: "muted" });
+  const updatePreview = () => {
+    const i = Number(interval.value), j = Number(jitter.value);
+    preview.textContent = !Number.isInteger(i) || !Number.isInteger(j) ? "" : j > 0
+      ? `${i}分ごと（前回の開始から ${Math.max(i - j, 0.25)}〜${i + j}分後のあいだで、秒までランダムにずらします）`
+      : `${i}分ごと（前回の開始から、ちょうど${i}分後）`;
+  };
+  interval.addEventListener("input", updatePreview); jitter.addEventListener("input", updatePreview); updatePreview();
+  const presets = [30, 45, 60].map((n) => h("button", { type: "button", onclick: () => { interval.value = n; updatePreview(); } }, `${n}分`));
   const ctl = h("div", { class: "card" }, h("h3", {}, "定期処理"),
-    h("label", { class: "inline" }, enabled, "定期処理を有効にする", tip("有効にすると、設定した間隔で新着を取得し、分類して返信案を作ります。送信は必ず承認が必要です。AWSでは15分ごとに起動し、この間隔に達したときだけ実行します。")),
-    h("div", { class: "row" }, h("div", { class: "grow" }, lbl("実行間隔", "短くするほどXの読み取り件数が増えます。新着が無ければ料金はほぼかかりません。"), interval),
+    h("label", { class: "inline" }, enabled, "定期処理を有効にする", tip("有効にすると、設定した間隔で新着を取得し、分類して返信案を作ります。送信は必ず承認が必要です。有効にした直後に、最初の1回が動きます。")),
+    h("div", { class: "row" },
+      h("div", { class: "grow" }, lbl("実行間隔（分）", "1〜999分を、好きな分数で入力できます。短くするほど、Xの読み取り件数が増えます。新着が無ければ、料金はほぼかかりません。"), h("div", { class: "row" }, h("div", { class: "grow" }, interval), ...presets)),
+      h("div", { class: "grow" }, lbl("ランダムなずらし幅（分）", "0〜99分。指定した分数以内で、前後にランダムにずらします。0ならずらしません。毎回、秒の単位までランダムになるので、00秒に揃いません。間隔より大きいずらし幅の場合、最短15秒後になります。"), jitter)),
+    preview,
+    h("div", { class: "row" },
       h("div", { class: "grow" }, lbl("1回の最大ページ数", "1ページは最大100件です。新着が多いときの上限で、残りは次回に取得します。"), pages),
       h("div", { class: "grow" }, lbl("初回の動作", "初回の実行だけに使います。現在地点から始めると、過去のメンションへの返信案は作られません。"), initial)),
     h("div", { class: "row end", style: "margin-top:12px" },
-      h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/job", { enabled: enabled.checked, interval_minutes: +interval.value, max_pages: +pages.value, initial_mode: initial.value }), "保存しました"); await refreshStatus(); renderJobs(); } }, "保存"),
+      h("button", { onclick: async () => {
+        await act(() => api("PUT", "/api/settings/job", { enabled: enabled.checked, interval_minutes: Number(interval.value), jitter_minutes: Number(jitter.value), max_pages: Number(pages.value), initial_mode: initial.value }), "保存しました");
+        await refreshStatus(); renderJobs();
+      } }, "保存"),
       h("button", { class: "primary", onclick: async (e) => { e.target.disabled = true; const r = await act(() => api("POST", "/api/jobs/run"), null); if (r) toast(r.status === "ok" ? `完了しました（新規${r.new}件）` : r.message, r.status !== "ok"); await refreshStatus(); renderJobs(); } }, "今すぐ実行")),
-    h("div", { class: "muted" }, `次回の実行予定: ${s.enabled ? fmt(d.next_due) : "停止中"}`));
+    h("div", { class: "muted" }, `次回の実行予定: ${s.enabled ? fmtSec(d.next_due) : "停止中"}`));
   const dev = status.mode === "mock" ? h("div", { class: "card" }, h("h3", {}, "動作確認（モック専用）", tip("モックの取得キューへ、サンプルのメンションを追加します。「今すぐ実行」で取り込まれます。")),
     h("button", { onclick: async () => { await act(() => api("POST", "/api/dev/mock-mentions", { count: 4 }), "サンプルを4件追加しました"); } }, "サンプルのメンションを追加")) : null;
   const runs = h("div", { class: "card" }, h("h3", {}, "実行履歴"), d.runs.length ? h("table", {}, h("tr", {}, ["開始", "起動", "結果", "取得", "新規", "返信案", "概算費用", "メッセージ"].map((c) => h("th", {}, c))),
-    d.runs.map((r) => h("tr", {}, h("td", {}, fmt(r.started_at)), h("td", {}, r.trigger === "manual" ? "手動" : "定期"), h("td", { class: r.status === "ok" ? "ok" : "err" }, r.status === "ok" ? "成功" : "失敗"),
+    d.runs.map((r) => h("tr", {}, h("td", {}, fmtSec(r.started_at)), h("td", {}, TRIGGER[r.trigger] || r.trigger), h("td", { class: r.status === "ok" ? "ok" : "err" }, r.status === "ok" ? "成功" : "失敗"),
       h("td", {}, r.fetched), h("td", {}, r.new), h("td", {}, r.drafted), h("td", {}, `$${r.est_cost_usd}`), h("td", {}, r.message)))) : h("div", { class: "muted" }, "まだ実行されていません"));
   view.replaceChildren(ctl, dev, runs);
 }
@@ -235,26 +253,43 @@ async function renderSettings() {
       h("button", { class: "primary", onclick: async () => { const r = await act(() => api("POST", "/api/x/connect")); if (!r) return; if (r.url) location.href = r.url; else { toast("接続しました"); reload(); } } }, status.x_connected ? "再接続" : "Xと接続")));
 
   // AI接続
-  const prov = h("select", {}, [["rule", "ルールのみ（外部へ送信しない）"], ["grok", "Grok（xAI）"]].map(([v, t]) => h("option", { value: v, selected: v === s.ai.provider }, t)));
+  const prov = h("select", {}, [["bedrock", "Amazon Bedrock（既定）"], ["openai", "OpenAI"], ["rule", "AIを使わない（ルールのみ）"]].map(([v, t]) => h("option", { value: v, selected: v === s.ai.provider }, t)));
   const mode = h("select", {}, [["classify", "分類のみAIに任せる"], ["classify_draft", "分類と返信案をAIに任せる"]].map(([v, t]) => h("option", { value: v, selected: v === s.ai.mode }, t)));
-  const model = h("input", { type: "text" }); model.value = s.ai.model;
-  const base = h("input", { type: "text" }); base.value = s.ai.base_url;
-  const aicard = h("div", { class: "card" }, h("h3", {}, "AI との接続", tip("Grokを選ぶと、スパム・要注意以外のメンション本文がxAIへ送信されます。成人向けの文脈を含む場合があるため、必要になるまでは「ルールのみ」を推奨します。ClaudeやBedrockには送りません。")),
+  const bModel = h("input", { type: "text" }); bModel.value = s.ai.bedrock_model;
+  const bRegion = h("input", { type: "text" }); bRegion.value = s.ai.bedrock_region;
+  const oModel = h("input", { type: "text" }); oModel.value = s.ai.openai_model;
+  const oBase = h("input", { type: "text" }); oBase.value = s.ai.openai_base_url;
+  const bedrockBox = h("div", {}, h("div", { class: "row" },
+    h("div", { class: "grow" }, lbl("モデルID", "BedrockのモデルIDまたは推論プロファイルIDです。AWSコンソールのBedrockで、そのモデルの利用を有効にしておいてください。接続テストで確認できます。"), bModel),
+    h("div", { class: "grow" }, lbl("リージョン", "Bedrockを呼び出すリージョンです。モデルが使えるリージョンを指定してください。"), bRegion)),
+    h("div", { class: "muted" }, "AWSの権限（IAM）で認証するため、APIキーは不要です。"));
+  const openaiBox = h("div", {}, h("div", { class: "row" },
+    h("div", { class: "grow" }, lbl("モデル名"), oModel),
+    h("div", { class: "grow" }, lbl("接続先URL", "OpenAI互換のAPI（/chat/completions）です。"), oBase)),
+    secretField("openai_api_key", "APIキー", "画面には表示されません。保存済みの値は確認できず、上書きのみできます。", s.secrets, reload));
+  const showProvider = () => { bedrockBox.hidden = prov.value !== "bedrock"; openaiBox.hidden = prov.value !== "openai"; mode.disabled = prov.value === "rule"; };
+  prov.addEventListener("change", showProvider); showProvider();
+  const aicard = h("div", { class: "card" }, h("h3", {}, "AI との接続", tip("スパム・要注意以外のメンション本文が、選んだAIへ送られます。ルールでスパム・要注意と判定できたものは送りません。本アプリでは、成人向けの内容は扱わない方針です。")),
+    status.mode === "mock" ? h("div", { class: "muted" }, "モックモードでは、外部のAIを呼びません。") : null,
     h("div", { class: "row" }, h("div", { class: "grow" }, lbl("方式"), prov), h("div", { class: "grow" }, lbl("AIの役割", "「分類と返信案」では、AIの返信案が使われます。リンクを含む案や長すぎる案は捨てて、定型文に戻します。"), mode)),
-    h("div", { class: "row" }, h("div", { class: "grow" }, lbl("モデル名", "xAIが提供するモデル名を入力してください。"), model), h("div", { class: "grow" }, lbl("接続先URL", "OpenAI互換のAPI（/chat/completions）を想定しています。"), base)),
-    secretField("ai_api_key", "APIキー", "画面には表示されません。保存済みの値は確認できず、上書きのみできます。", s.secrets, reload),
+    bedrockBox, openaiBox,
     h("div", { class: "row end", style: "margin-top:10px" },
-      h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/ai", { provider: prov.value, mode: mode.value, model: model.value, base_url: base.value }), "保存しました"); } }, "保存"),
-      h("button", { onclick: async (e) => { e.target.disabled = true; const r = await act(() => api("POST", "/api/ai/test")); e.target.disabled = false; if (r) toast(`接続OK（試験文の判定: ${r.label || "不明"}）`); } }, "接続テスト")));
+      h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/ai", { provider: prov.value, mode: mode.value, bedrock_model: bModel.value, bedrock_region: bRegion.value, openai_model: oModel.value, openai_base_url: oBase.value }), "保存しました"); } }, "保存"),
+      h("button", { onclick: async (e) => { e.target.disabled = true; const r = await act(() => api("POST", "/api/ai/test")); e.target.disabled = false; if (r) toast(`接続OK（試験文の判定: ${r.label || "不明"}）`); } }, "接続テスト（保存後に押す）")));
 
   // 通知
-  const dn = h("input", { type: "checkbox", checked: s.notify.discord_enabled });
-  const ncard = h("div", { class: "card" }, h("h3", {}, "通知（Discord）", tip("承認待ちの件数だけを送ります。返信の本文は送りません。")),
-    h("label", { class: "inline" }, dn, "新着があったら通知する"),
-    secretField("discord_webhook", "Webhook URL", "DiscordのチャンネルでWebhookを作成し、URLを貼り付けてください。URLは秘密情報です。", s.secrets, reload),
+  const tgOn = h("input", { type: "checkbox", checked: s.notify.telegram_enabled });
+  const tgChat = h("input", { type: "text", placeholder: "例: 123456789" }); tgChat.value = s.notify.telegram_chat_id;
+  const siteUrl = h("input", { type: "text", placeholder: "https://…（任意）" }); siteUrl.value = s.notify.site_url;
+  const ncard = h("div", { class: "card" }, h("h3", {}, "通知（Telegram）", tip("承認待ちの件数だけを送ります。返信の本文は送りません。")),
+    h("label", { class: "inline" }, tgOn, "新着があったら通知する"),
+    secretField("telegram_bot_token", "ボットトークン", "Telegramの BotFather でボットを作ると発行されます。画面には表示されません。", s.secrets, reload),
+    h("div", { class: "row" },
+      h("div", { class: "grow" }, lbl("チャットID", "作ったボットに何かメッセージを送ってから、ブラウザで https://api.telegram.org/bot（トークン）/getUpdates を開くと、chat の id が分かります。グループの場合は -100 から始まる数字です。"), tgChat),
+      h("div", { class: "grow" }, lbl("画面のURL（任意）", "入力すると、通知にこのURLを添えます。"), siteUrl)),
     h("div", { class: "row end", style: "margin-top:10px" },
-      h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/notify", { discord_enabled: dn.checked }), "保存しました"); } }, "保存"),
-      h("button", { onclick: async () => { const r = await act(() => api("POST", "/api/notify/test")); if (r) toast(r.sent ? "送信しました" : "送信に失敗しました", !r.sent); } }, "テスト送信")));
+      h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/notify", { telegram_enabled: tgOn.checked, telegram_chat_id: tgChat.value, site_url: siteUrl.value }), "保存しました"); } }, "保存"),
+      h("button", { onclick: async () => { const r = await act(() => api("POST", "/api/notify/test")); if (r) toast(r.sent ? "送信しました" : `送信に失敗しました: ${r.reason}`, !r.sent); } }, "テスト送信（保存後に押す）")));
 
   // 安全装置
   const lim = h("input", { type: "number", min: 0, max: 100 }); lim.value = s.safety.daily_limit;

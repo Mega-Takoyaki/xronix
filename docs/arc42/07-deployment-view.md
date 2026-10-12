@@ -10,7 +10,9 @@
 | データ | DynamoDB オンデマンド |
 | 秘密情報 | SSM Parameter Store SecureString |
 | 初回のX認可 | 画面の「Xと接続」から行う。コールバックはAPIの `/api/x/callback`（ADR-0009） |
-| 定期起動 | EventBridge Scheduler が15分ごとに起動し、設定上の間隔に達したときだけ実行する |
+| 定期起動 | 実行のたびに、次回を秒単位の一回限りのEventBridge Schedulerとして登録する（ADR-0013）。15分ごとの見守りが、遅れた予定を救済する |
+| AI | Amazon Bedrock（LambdaのIAMロールで認証。東京リージョンが既定、画面で変更可） |
+| 通知 | Telegram Bot API |
 
 ## 費用の見込み（月額、概算。推測を含む）
 

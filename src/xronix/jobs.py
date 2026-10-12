@@ -1,6 +1,7 @@
 """定期処理。取得→保存→分類→返信案→通知。EventBridgeは短い間隔で tick() を呼ぶだけで、実行間隔は設定で決まる。"""
 from __future__ import annotations
 
+import random
 from datetime import timedelta
 
 from .classify import CAUTION, FAN, OTHER, QUESTION, SPAM
@@ -8,34 +9,77 @@ from .common import Lease, iso, new_id, parse_iso, utcnow
 from .xclient import AuthRequired, XError
 
 COST_READ = 0.001
+MIN_LEAD_SECONDS = 15        # 次回の実行は、登録時点から最低この秒数あとにする
+EARLY_TOLERANCE_SECONDS = 2  # 起動がわずかに早い場合の許容
+WATCHDOG_GRACE_SECONDS = 120 # 見守り（15分ごと）は、予定からこれ以上遅れているときだけ実行する
 
 
 class JobRunner:
-    def __init__(self, repo, settings, tokens, x, ai, templates, notifier, logger, now=utcnow):
+    def __init__(self, repo, settings, tokens, x, ai, templates, notifier, logger, now=utcnow, scheduler=None, rng=None):
         self.repo, self.settings, self.tokens, self.x = repo, settings, tokens, x
         self.ai, self.templates, self.notifier, self.log, self.now = ai, templates, notifier, logger, now
         self.lease = Lease(repo, "job", now)
+        from .scheduler import NullScheduler
+        self.scheduler = scheduler or NullScheduler()
+        self.rng = rng or random.SystemRandom()
 
     # --- 状態 ---
     def state(self) -> dict:
-        return {"last_started_at": "", "last_status": "", **(self.repo.get("state", "job") or {})}
+        return {"last_started_at": "", "last_status": "", "next_run_at": "", "schedule_name": "", **(self.repo.get("state", "job") or {})}
 
     def next_due(self) -> str:
+        cfg = self.settings.get("job")
+        return self.state()["next_run_at"] if cfg["enabled"] and not self.settings.get("safety")["kill_switch"] else ""
+
+    def _save(self, **values) -> None:
+        self.repo.put("state", "job", {**self.state(), **values})
+
+    # --- 次回実行の計画 ---
+    def plan(self, reason: str = "") -> str:
+        """次回の実行時刻を決めて登録する。ずらし幅があれば、±の範囲で秒単位にランダムにずらす。"""
         cfg, st = self.settings.get("job"), self.state()
-        if not cfg["enabled"] or not st["last_started_at"]:
-            return ""
-        return iso(parse_iso(st["last_started_at"]) + timedelta(minutes=cfg["interval_minutes"]))
+        old = st["schedule_name"]
+        new_name, next_at = "", ""
+        if cfg["enabled"] and not self.settings.get("safety")["kill_switch"]:
+            now = self.now()
+            if st["last_started_at"]:
+                delay = cfg["interval_minutes"] * 60
+                j = cfg["jitter_minutes"] * 60
+                if j:
+                    delay += self.rng.randint(-j, j)  # 秒まで含めてずらす
+                nxt = max(parse_iso(st["last_started_at"]) + timedelta(seconds=delay), now + timedelta(seconds=MIN_LEAD_SECONDS))
+            else:
+                nxt = now + timedelta(seconds=MIN_LEAD_SECONDS)  # 初めて有効にしたときは、すぐ実行する
+            next_at = iso(nxt)
+            try:
+                new_name = self.scheduler.arm(nxt)
+            except Exception as e:  # noqa: BLE001  登録に失敗しても、見守りが予定の遅れを見て実行する
+                self.log.error("job", f"次回実行の登録に失敗しました（見守りが代わりに実行します）: {type(e).__name__}")
+        self._save(next_run_at=next_at, schedule_name=new_name)
+        if old and old != new_name:
+            try:
+                self.scheduler.cancel(old)
+            except Exception as e:  # noqa: BLE001
+                self.log.warn("job", f"古い実行予定の削除に失敗しました: {type(e).__name__}")
+        return next_at
 
     # --- 入口 ---
-    def tick(self) -> dict | None:
-        """定期起動の入口。有効で、停止中でなく、時刻が来ていれば実行する。"""
+    def tick(self, source: str = "schedule") -> dict | None:
+        """定期起動の入口。source=schedule は予定時刻に、watchdog は15分ごとの見守りから呼ばれる。"""
         cfg = self.settings.get("job")
         if not cfg["enabled"] or self.settings.get("safety")["kill_switch"]:
+            st = self.state()
+            if st["next_run_at"] or st["schedule_name"]:
+                self.plan("disabled")  # 予定を取り消す
             return None
-        st = self.state()
-        if st["last_started_at"] and parse_iso(st["last_started_at"]) + timedelta(minutes=cfg["interval_minutes"]) > self.now():
+        nxt = self.state()["next_run_at"]
+        if not nxt:
+            self.plan("init")
             return None
-        return self.run("schedule")
+        due = parse_iso(nxt)
+        ready = self.now() >= due + timedelta(seconds=WATCHDOG_GRACE_SECONDS) if source == "watchdog" \
+            else self.now() >= due - timedelta(seconds=EARLY_TOLERANCE_SECONDS)
+        return self.run(source) if ready else None
 
     def run(self, trigger: str = "manual") -> dict:
         t0 = self.now()
@@ -48,7 +92,7 @@ class JobRunner:
         if not self.lease.acquire(holder, ttl_seconds=600):
             return self._finish(run, "skipped", "別の実行が進行中です", record=False)
         try:
-            self.repo.put("state", "job", {**self.state(), "last_started_at": run["started_at"]})
+            self._save(last_started_at=run["started_at"])
             try:
                 self._execute(run)
                 return self._finish(run, "ok", run["message"] or "完了")
@@ -67,8 +111,9 @@ class JobRunner:
         run["est_cost_usd"] = round(run["reads"] * COST_READ, 4)
         if record:
             self.repo.put("runs", run["id"], run)
-            self.repo.put("state", "job", {**self.state(), "last_status": status})
+            self._save(last_status=status)
             (self.log.info if status == "ok" else self.log.error)("job", f"ジョブ{ {'ok': '成功', 'error': '失敗', 'skipped': 'スキップ'}[status] }: {message}", run_id=run["id"], trigger=run["trigger"])
+            self.plan("after_run")
         return run
 
     # --- 本体 ---

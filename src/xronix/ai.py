@@ -1,6 +1,7 @@
-"""AI接続（任意）。既定はルールベースで外部へ送らない。Grok(xAI)を選ぶと本文を外部へ送る。
+"""AI接続（任意）。既定は Amazon Bedrock（IAMで認証。APIキー不要）。OpenAI互換APIも選べる。
 
-ルールでスパム・要注意と判定したものはAIに送らない。ClaudeやBedrockは使わない方針。
+ルールでスパム・要注意と判定したものはAIに送らない（費用と外部送信を減らすため）。
+モックモード（ローカルの動作確認）では、外部のAIを呼ばない。
 """
 from __future__ import annotations
 
@@ -13,22 +14,37 @@ from .http import Http, NetworkError
 
 SYSTEM = (
     "あなたはSNSアカウント運用者の補助です。受け取った返信を次のいずれかに分類し、JSONだけを出力してください。"
-    "分類: fan（ファンの感想）, question（質問）, spam（スパム・勧誘）, caution（攻撃的・性的・個人情報・トラブルの恐れ）, other（その他）。"
+    "分類: fan（ファンの感想）, question（質問）, spam（スパム・勧誘）, caution（攻撃的・個人情報・トラブルの恐れ）, other（その他）。"
     '形式: {"category": "...", "reply": "..."}。replyは短い日本語の返信案で、URLを含めず、不明なら空文字にしてください。'
 )
+SAMPLE = "いつも素敵な投稿ありがとうございます！"
 
 
 class AIError(Exception):
     pass
 
 
+def _default_bedrock_factory(region: str):
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client("bedrock-runtime", region_name=region, config=Config(read_timeout=30, connect_timeout=5, retries={"max_attempts": 2}))
+
+
 class AIService:
-    def __init__(self, settings, secrets, http: Http, logger):
+    def __init__(self, settings, secrets, http: Http, logger, allow_external: bool = True, bedrock_factory=None):
         self.settings, self.secrets, self.http, self.log = settings, secrets, http, logger
+        self.allow_external = allow_external
+        self._bedrock_factory = bedrock_factory or _default_bedrock_factory
+
+    def provider(self) -> str:
+        return self.settings.get("ai")["provider"]
 
     def active(self) -> bool:
-        cfg = self.settings.get("ai")
-        return cfg["provider"] == "grok" and bool(self.secrets.get("ai_api_key"))
+        if not self.allow_external:
+            return False
+        p = self.provider()
+        return p == "bedrock" or (p == "openai" and bool(self.secrets.get("openai_api_key")))
 
     def classify(self, text: str) -> tuple[str, str, str]:
         """(分類, 返信案または空, 判定元) を返す。AI失敗時はルールに戻す。"""
@@ -42,7 +58,6 @@ class AIService:
             self.log.warn("ai", f"AIの判定に失敗したためルールで分類しました: {e}")
             return rule, "", "rule"
         cat = out.get("category") if out.get("category") in CATEGORIES else rule
-        # AIが安全側を緩めないよう、ルールが質問・ファンでAIがother等になった場合もAI結果を採用するが、cautionは常に尊重する
         reply = ""
         if cfg["mode"] == "classify_draft":
             r = str(out.get("reply") or "").strip()
@@ -50,34 +65,64 @@ class AIService:
                 reply = r
         return cat, reply, "ai"
 
+    # --- 呼び出し ---
     def _ask(self, cfg: dict, text: str) -> dict:
-        key = self.secrets.get("ai_api_key")
-        body = json.dumps({
-            "model": cfg["model"],
-            "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": text}],
-            "temperature": 0.2,
-        }).encode()
+        p = cfg["provider"]
+        if p == "bedrock":
+            content = self._ask_bedrock(cfg, text)
+        elif p == "openai":
+            content = self._ask_openai(cfg, text)
+        else:
+            raise AIError("AIが無効です")
+        m = re.search(r"\{.*\}", content, re.S)
+        if not m:
+            raise AIError("応答にJSONがありません")
         try:
-            r = self.http.request(
-                "POST", cfg["base_url"].rstrip("/") + "/chat/completions",
-                {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, body, timeout=30,
+            return json.loads(m.group(0))
+        except ValueError as e:
+            raise AIError("応答の形式が不正です") from e
+
+    def _ask_bedrock(self, cfg: dict, text: str) -> str:
+        from botocore.exceptions import BotoCoreError, ClientError
+
+        try:
+            client = self._bedrock_factory(cfg["bedrock_region"])
+            resp = client.converse(
+                modelId=cfg["bedrock_model"],
+                system=[{"text": SYSTEM}],
+                messages=[{"role": "user", "content": [{"text": text}]}],
+                inferenceConfig={"maxTokens": 400, "temperature": 0.2},
             )
+            return "".join(b.get("text", "") for b in resp["output"]["message"]["content"])
+        except ClientError as e:
+            err = e.response.get("Error", {})
+            raise AIError(f"Bedrockがエラーを返しました（{err.get('Code', '不明')}）: {err.get('Message', '')}"[:300]) from e
+        except (BotoCoreError, KeyError, TypeError) as e:
+            raise AIError(f"Bedrockの呼び出しに失敗しました（{type(e).__name__}）") from e
+
+    def _ask_openai(self, cfg: dict, text: str) -> str:
+        key = self.secrets.get("openai_api_key")
+        if not key:
+            raise AIError("OpenAIのAPIキーが設定されていません")
+        body = json.dumps({"model": cfg["openai_model"], "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": text}]}).encode()
+        try:
+            r = self.http.request("POST", cfg["openai_base_url"].rstrip("/") + "/chat/completions",
+                                  {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, body, timeout=30)
         except NetworkError as e:
             raise AIError(f"通信エラー: {e}") from e
         if r.status != 200:
-            raise AIError(f"HTTP {r.status}")
+            raise AIError(f"OpenAIがエラーを返しました（HTTP {r.status}）")
         try:
-            content = json.loads(r.body)["choices"][0]["message"]["content"]
-            m = re.search(r"\{.*\}", content, re.S)
-            if not m:
-                raise AIError("応答にJSONがありません")
-            return json.loads(m.group(0))
+            return json.loads(r.body)["choices"][0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as e:
             raise AIError("応答の形式が不正です") from e
 
     def test(self) -> dict:
-        if not self.secrets.get("ai_api_key"):
-            raise AIError("APIキーが設定されていません")
         cfg = self.settings.get("ai")
-        out = self._ask(cfg, "いつも素敵な投稿ありがとうございます！")
-        return {"category": out.get("category", ""), "label": LABELS.get(out.get("category", ""), "")}
+        if cfg["provider"] == "rule":
+            raise AIError("AIを使わない設定です")
+        if not self.allow_external:
+            raise AIError("モックモードでは外部のAIを呼びません")
+        out = self._ask(cfg, SAMPLE)
+        cat = out.get("category", "")
+        return {"provider": cfg["provider"], "category": cat, "label": LABELS.get(cat, "")}

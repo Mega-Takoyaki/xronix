@@ -4,7 +4,7 @@
 
 - [ ] AWSアカウントの有無、使うCLIプロファイル名
 - [ ] リージョンは ap-northeast-1 でよいか
-- [ ] 通知手段（Discord／メール／LINE）→ ADR-0005
+- [x] 通知手段 → Telegram（ADR-0012）
 - [ ] ADR-0001〜0004 の提案への可否
 - [ ] トークンの保管先（SSMで更新、DynamoDBでリース）でよいか → ADR-0003
 - [ ] 初回起動時、過去のメンションを遡るか、現在地点から始めるか
@@ -29,13 +29,15 @@
 ## 実装済み（MVP、ローカル）
 
 - [x] 取得、分類、返信案、承認、送信、定型文、ブロック対象、上限、緊急停止
-- [x] 定期処理の制御、ログ、統計、AI接続（Grok）、Discord通知
+- [x] 定期処理の制御（1〜999分、ずらし幅、秒単位のランダム）、ログ、統計、AI接続（Bedrock／OpenAI）、Telegram通知
 - [x] DynamoDB／SSM／Lambda入口（moto）
 
 ## 次にやること
 
 - [ ] 実機のXで接続・取得を確認する（小さく試す。送信は1件ずつ）
-- [ ] Grokの接続を実機で確認する（モデル名と接続先は未確認の仮値）
+- [ ] Bedrockの接続を実機で確認する（既定のモデルID `anthropic.claude-haiku-5-5` が東京リージョンで使えるかは未確認。AWSコンソールでモデルの利用有効化が必要な場合がある）
+- [ ] Telegramの通知を実機で確認する（ボット作成、チャットIDの確認）
+- [ ] 次回実行の登録（EventBridge Scheduler）を実AWSで確認する（秒単位のランダム、見守り）
 - [x] SAMテンプレート、Basic認証、GitHub Actionsの自動デプロイ（OIDC）を用意（未デプロイ）
 - [ ] 運用者: [手順書](guide/aws-staging-setup.md) に従い、費用の見込みを確認したうえで、bootstrap・GitHubのEnvironment設定を行う
 - [ ] 初回デプロイ後、動作確認（実AWSでの権限不足やCloudFront Functionの挙動は未検証）

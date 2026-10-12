@@ -6,7 +6,7 @@ import os
 import threading
 from typing import Protocol
 
-NAMES = ("x_client_secret", "x_access_token", "x_refresh_token", "ai_api_key", "discord_webhook")
+NAMES = ("x_client_secret", "x_access_token", "x_refresh_token", "openai_api_key", "telegram_bot_token")
 
 
 class SecretStore(Protocol):

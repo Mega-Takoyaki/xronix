@@ -68,5 +68,7 @@ def api_handler(event, context=None):
 
 
 def job_handler(event=None, context=None):
-    run = _get_api().app.jobs.tick()
+    """予定時刻の一回限りの起動（source=schedule）と、15分ごとの見守り（watchdog）の両方から呼ばれる。"""
+    source = "watchdog" if (event or {}).get("watchdog") else "schedule"
+    run = _get_api().app.jobs.tick(source)
     return {"ran": run is not None, "status": run["status"] if run else "not_due"}

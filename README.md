@@ -8,11 +8,11 @@ MVPをローカルで動かせる（モックモード）。AWSの検証環境�
 
 | 機能 | 状態 |
 | --- | --- |
-| 定期処理（有効／無効、15分〜24時間の間隔、今すぐ実行、実行履歴） | ローカルで確認済み |
+| 定期処理（有効／無効、1〜999分の間隔、±1〜99分を秒までランダムにずらす設定、今すぐ実行、実行履歴） | ローカルで確認済み。AWSでの秒単位の登録は、moto（模擬）で確認 |
 | メンション取得、分類、返信案、承認画面、送信 | ローカル（モック）で確認済み |
 | 定型文の管理、ブロック対象、1日の上限、緊急停止 | ローカルで確認済み |
 | ログ・統計（日別、分類別、概算費用） | ローカルで確認済み |
-| X接続（OAuth2＋PKCE）、AI接続（Grok）、Discord通知 | 単体テスト（偽のHTTP）のみ。実機は未確認 |
+| X接続（OAuth2＋PKCE）、AI接続（Bedrock既定／OpenAI）、Telegram通知 | 単体テスト（偽のHTTP・偽のBedrock）のみ。実機は未確認 |
 | DynamoDB／SSMの実装、Lambda入口 | motoでテスト済み。実AWSは未確認 |
 | SAMテンプレート（`template.yaml`）、事前準備（`infra/bootstrap.yaml`）、自動デプロイ（`.github/workflows/deploy.yml`） | lint・ビルド・Basic認証のロジックのテストまで。実AWSへのデプロイは未実施 |
 
@@ -39,7 +39,7 @@ src/xronix/   コア（api.py が全操作の入口。devserver.py と lambda_ha
 web/          日本語の管理画面（静的HTML／JS）
 template.yaml  SAMテンプレート（検証環境）
 infra/        事前準備のテンプレート（OIDCとデプロイ用ロール）
-tests/        pytest（69件）
+tests/        pytest（93件）
 docs/         arc42、ADR、TODO
 ```
 
@@ -57,6 +57,6 @@ arc42 をベースにし、判断は ADR、作業は TODO に分けて記録す�
 
 - 半自動。新着取得、分類、返信案、人が承認、送信の順。自動送信は含めない。
 - LambdaはVPCに入れない。
-- 成人向けの文脈を含むため、Claude（Bedrock含む）には送らない。AIを使う場合はGrokのみで、既定はオフ。
+- 成人向けの内容は、本アプリでは扱わない（ReelMillyと用途を分離）。AIは Amazon Bedrock が既定で、OpenAIも選べる。スパム・要注意はAIに送らない。
 - ReelMilly とは別アプリ。コードもXトークンも共有しない。
 - 秘密情報は SSM / ローカルファイルのみに置き、コミットしない。画面にも表示しない。

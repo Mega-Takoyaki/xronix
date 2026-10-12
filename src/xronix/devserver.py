@@ -87,7 +87,7 @@ def make_handler(api: Api):
     return H
 
 
-def start_ticker(app: App, interval: int = 30) -> threading.Event:
+def start_ticker(app: App, interval: int = 5) -> threading.Event:
     stop = threading.Event()
 
     def loop():

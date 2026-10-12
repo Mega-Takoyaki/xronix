@@ -21,14 +21,14 @@ def test_unknown_route_and_method(app):
 
 def test_secrets_never_returned(app):
     api = Api(app)
-    assert call(api, "PUT", "/api/secrets/ai_api_key", {"value": "SECRET-KEY-123"})[0] == 200
+    assert call(api, "PUT", "/api/secrets/openai_api_key", {"value": "SECRET-KEY-123"})[0] == 200
     assert call(api, "PUT", "/api/secrets/x_access_token", {"value": "x"})[0] == 404  # トークンは画面から書けない
     _, s = call(api, "GET", "/api/settings")
-    assert s["secrets"]["ai_api_key"] is True
+    assert s["secrets"]["openai_api_key"] is True
     dump = json.dumps(s) + json.dumps(call(api, "GET", "/api/logs")[1], ensure_ascii=False)
     assert "SECRET-KEY-123" not in dump
-    assert call(api, "DELETE", "/api/secrets/ai_api_key")[0] == 200
-    assert call(api, "GET", "/api/settings")[1]["secrets"]["ai_api_key"] is False
+    assert call(api, "DELETE", "/api/secrets/openai_api_key")[0] == 200
+    assert call(api, "GET", "/api/settings")[1]["secrets"]["openai_api_key"] is False
 
 
 def test_templates_crud_and_validation(app):
@@ -146,61 +146,132 @@ def test_mock_endpoint_blocked_in_live(clock):
 
 
 # --- AI・通知 ---
-def grok_app(app, reply_json):
+def use_bedrock(app, bedrock, reply_json, mode="classify_draft"):
     api = Api(app)
-    call(api, "PUT", "/api/settings/ai", {"provider": "grok", "mode": "classify_draft", "model": "grok-test"})
-    call(api, "PUT", "/api/secrets/ai_api_key", {"value": "k"})
+    call(api, "PUT", "/api/settings/ai", {"provider": "bedrock", "mode": mode, "bedrock_model": "test-model-id"})
+    bedrock.push_text(reply_json)
+    return api
+
+
+def use_openai(app, reply_json):
+    api = Api(app)
+    call(api, "PUT", "/api/settings/ai", {"provider": "openai", "mode": "classify_draft", "openai_model": "test-gpt"})
+    call(api, "PUT", "/api/secrets/openai_api_key", {"value": "k"})
     app.http.push(200, {"choices": [{"message": {"content": reply_json}}]})
     return api
 
 
-def test_ai_classify_and_draft_with_fallbacks(app):
-    grok_app(app, '前置き {"category": "question", "reply": "ご質問ありがとうございます"} 後ろ')
+def test_bedrock_needs_no_key(app, bedrock):
+    Api(app).handle("PUT", "/api/settings/ai", {}, {"provider": "bedrock"})
+    assert app.ai.provider() == "bedrock" and app.ai.active() is True
+    bedrock.push_text('前置き {"category": "question", "reply": "ご質問ありがとうございます"} 後ろ')
     cat, reply, by = app.ai.classify("明日は配信ありますか")
-    assert (cat, reply, by) == ("question", "ご質問ありがとうございます", "ai")
+    assert (cat, reply, by) == ("question", "", "ai")                  # 既定は分類のみ。返信案は使わない
+    sent = bedrock.calls[-1]
+    assert sent["modelId"] == "anthropic.claude-haiku-5-5"
+    assert sent["messages"][0]["content"][0]["text"] == "明日は配信ありますか"
+    assert app.http.calls == []                                         # Bedrockの呼び出しはHTTPではなくboto3
+
+
+def test_bedrock_classify_and_draft_with_fallbacks(app, bedrock):
+    use_bedrock(app, bedrock, '{"category": "question", "reply": "ご質問ありがとうございます"}')
+    assert app.ai.classify("明日は配信ありますか") == ("question", "ご質問ありがとうございます", "ai")
+    assert bedrock.calls[-1]["modelId"] == "test-model-id"
+    bedrock.push_text('{"category":"fan","reply":"見て https://a.example"}')
+    assert app.ai.classify("可愛い")[1] == ""                          # URL入りの返信案は捨てる
+    bedrock.push_text('{"category":"fan","reply":"' + "あ" * 200 + '"}')
+    assert app.ai.classify("可愛い")[1] == ""                          # 長すぎる案も捨てる
+    bedrock.push_error("ThrottlingException", "slow down")
+    assert app.ai.classify("可愛い")[2] == "rule"                      # 失敗時はルールに戻す
+    bedrock.push_text("not json")
+    assert app.ai.classify("可愛い")[2] == "rule"
+    bedrock.push_text('{"category":"hacker"}')
+    assert app.ai.classify("可愛い")[0] == "fan"                       # 不明な分類はルールの結果を使う
+
+
+def test_openai_option(app):
+    use_openai(app, '{"category": "question", "reply": "ご質問ありがとうございます"}')
+    assert app.ai.classify("明日は配信ありますか") == ("question", "ご質問ありがとうございます", "ai")
     call_ = app.http.calls[-1]
-    assert call_["url"] == "https://api.x.ai/v1/chat/completions" and call_["headers"]["Authorization"] == "Bearer k"
-    assert json.loads(call_["body"])["model"] == "grok-test"
-    app.http.push(200, {"choices": [{"message": {"content": '{"category":"fan","reply":"見て https://a.example"}'}}]})
-    assert app.ai.classify("可愛い")[1] == ""                      # URL入りの返信案は捨てる
+    assert call_["url"] == "https://api.openai.com/v1/chat/completions" and call_["headers"]["Authorization"] == "Bearer k"
+    assert json.loads(call_["body"])["model"] == "test-gpt"
     app.http.push(500, {})
-    assert app.ai.classify("可愛い")[2] == "rule"                   # 失敗時はルールに戻す
-    app.http.push(200, {"choices": [{"message": {"content": "not json"}}]})
     assert app.ai.classify("可愛い")[2] == "rule"
 
 
-def test_ai_never_sees_spam_or_caution(app):
-    grok_app(app, "{}")
-    n = len(app.http.calls)
+def test_openai_without_key_does_nothing(app):
+    api = Api(app)
+    call(api, "PUT", "/api/settings/ai", {"provider": "openai"})
+    assert app.ai.active() is False and app.ai.classify("可愛い")[2] == "rule" and app.http.calls == []
+
+
+def test_rule_provider_and_mock_mode_send_nothing(app, bedrock):
+    api = Api(app)
+    call(api, "PUT", "/api/settings/ai", {"provider": "rule"})
+    assert app.ai.classify("可愛い")[2] == "rule" and bedrock.calls == []
+    call(api, "PUT", "/api/settings/ai", {"provider": "bedrock"})
+    app.ai.allow_external = False                                       # モックモード（ローカルの動作確認）
+    assert app.ai.classify("可愛い")[2] == "rule" and bedrock.calls == []
+
+
+def test_ai_never_sees_spam_or_caution(app, bedrock):
+    use_bedrock(app, bedrock, "{}")
     assert app.ai.classify("副業で稼げます")[2] == "rule"
     assert app.ai.classify("DM送って")[2] == "rule"
-    assert len(app.http.calls) == n                                 # 外部へ送っていない
+    assert bedrock.calls == []                                          # 外部へ送っていない
 
 
-def test_ai_off_by_default_sends_nothing(app):
-    assert app.ai.classify("可愛い")[2] == "rule" and app.http.calls == []
-
-
-def test_ai_connection_test_endpoint(app):
+def test_ai_connection_test_endpoint(app, bedrock):
     api = Api(app)
-    assert call(api, "POST", "/api/ai/test")[0] == 502                 # キー未設定
-    grok_app(app, '{"category":"fan"}')
+    call(api, "PUT", "/api/settings/ai", {"provider": "bedrock"})
+    bedrock.push_error("AccessDeniedException", "model access not enabled")
     st, body = call(api, "POST", "/api/ai/test")
-    assert st == 200 and body["label"] == "ファンの感想"
+    assert st == 502 and "AccessDeniedException" in body["error"]       # 原因が画面に出る
+    bedrock.push_text('{"category":"fan"}')
+    st, body = call(api, "POST", "/api/ai/test")
+    assert st == 200 and body == {"provider": "bedrock", "category": "fan", "label": "ファンの感想"}
+    call(api, "PUT", "/api/settings/ai", {"provider": "rule"})
+    assert call(api, "POST", "/api/ai/test")[0] == 502
 
 
-def test_notify_sends_counts_only(app):
+def test_telegram_notify_sends_counts_only(app):
     api = Api(app)
-    call(api, "PUT", "/api/secrets/discord_webhook", {"value": "https://discord.example/hook"})
-    call(api, "PUT", "/api/settings/notify", {"discord_enabled": True})
+    call(api, "PUT", "/api/secrets/telegram_bot_token", {"value": "123:ABC-token"})
+    call(api, "PUT", "/api/settings/notify", {"telegram_enabled": True, "telegram_chat_id": "-100777", "site_url": "https://example.cloudfront.net"})
     call(api, "POST", "/api/x/connect")
     app.jobs.run()
     app.x.add_mentions(["とても可愛い投稿です"])
-    app.http.push(204, b"")
+    app.http.push(200, {"ok": True})
     app.jobs.run()
     sent = app.http.calls[-1]
-    assert sent["url"] == "https://discord.example/hook" and "1件" in json.loads(sent["body"])["content"]
+    assert sent["url"] == "https://api.telegram.org/bot123:ABC-token/sendMessage"
+    payload = json.loads(sent["body"])
+    assert payload["chat_id"] == "-100777" and "1件" in payload["text"] and "https://example.cloudfront.net" in payload["text"]
     assert "可愛い" not in sent["body"].decode()                        # 本文は載せない
+    dump = json.dumps(call(api, "GET", "/api/logs")[1], ensure_ascii=False) + json.dumps(call(api, "GET", "/api/settings")[1])
+    assert "123:ABC-token" not in dump                                   # トークンは画面にもログにも出ない
+
+
+def test_telegram_disabled_or_incomplete_sends_nothing(app):
+    api = Api(app)
+    call(api, "PUT", "/api/settings/notify", {"telegram_enabled": True, "telegram_chat_id": "1"})
+    assert app.notifier.enabled() is False                              # トークン未設定
+    call(api, "PUT", "/api/secrets/telegram_bot_token", {"value": "t"})
+    call(api, "PUT", "/api/settings/notify", {"telegram_enabled": False})
+    assert app.notifier.notify_pending(3) is False and app.http.calls == []
+
+
+def test_telegram_test_endpoint_reports_reason(app):
+    api = Api(app)
+    st, body = call(api, "POST", "/api/notify/test")
+    assert st == 200 and body["sent"] is False and "必要" in body["reason"]
+    call(api, "PUT", "/api/secrets/telegram_bot_token", {"value": "t0k"})
+    call(api, "PUT", "/api/settings/notify", {"telegram_chat_id": "42"})
+    app.http.push(400, {"ok": False, "description": "Bad Request: chat not found"})
+    body = call(api, "POST", "/api/notify/test")[1]
+    assert body["sent"] is False and "chat not found" in body["reason"] and "t0k" not in body["reason"]
+    app.http.push(200, {"ok": True})
+    assert call(api, "POST", "/api/notify/test")[1] == {"sent": True, "reason": ""}
 
 
 # --- Lambdaアダプタ（DynamoDB・SSMはmoto） ---
@@ -268,11 +339,15 @@ def test_lambda_handlers_end_to_end(monkeypatch):
         a = basic()
         r = lh.api_handler(ev("GET", "/api/status", auth=a))
         assert r["statusCode"] == 200 and json.loads(r["body"])["mode"] == "live"
-        assert lh.api_handler(ev("PUT", "/api/secrets/ai_api_key", {"value": "SSMVALUE"}, auth=a))["statusCode"] == 200
-        assert boto3.client("ssm").get_parameter(Name="/xronix/ai_api_key", WithDecryption=True)["Parameter"]["Value"] == "SSMVALUE"
+        assert lh.api_handler(ev("PUT", "/api/secrets/openai_api_key", {"value": "SSMVALUE"}, auth=a))["statusCode"] == 200
+        assert boto3.client("ssm").get_parameter(Name="/xronix/openai_api_key", WithDecryption=True)["Parameter"]["Value"] == "SSMVALUE"
         r = lh.api_handler(ev("PUT", "/api/settings/job", {"enabled": True, "interval_minutes": 30}, auth=a))
         assert json.loads(r["body"])["interval_minutes"] == 30
         assert lh.api_handler(ev("POST", "/api/templates", {"category": "fan", "text": "ありがとう"}, auth=a))["statusCode"] == 201
-        assert lh.job_handler({}) == {"ran": True, "status": "error"}   # 未接続はerrorとして記録される
-        assert lh.job_handler({})["ran"] is False                       # 直後は間隔未到達で実行しない
+        # 有効にした直後は、予定（15秒後）に達していないので実行しない。見守りも同じ
+        assert lh.job_handler({"source": "schedule"})["ran"] is False
+        assert lh.job_handler({"watchdog": True})["ran"] is False
+        # 予定が過ぎていれば実行する（未接続なのでerrorとして記録される）
+        lh._api.app.repo.update_if("state", "job", {"next_run_at": "2000-01-01T00:00:00.000Z"})
+        assert lh.job_handler({"source": "schedule"}) == {"ran": True, "status": "error"}
         lh._api = None

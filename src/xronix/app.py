@@ -37,7 +37,8 @@ class App:
         return getattr(self.x, "mode", "") == "mock"
 
 
-def build(repo, secrets, x, http: Http | None = None, now=utcnow, sleep=None) -> App:
+def build(repo, secrets, x, http: Http | None = None, now=utcnow, sleep=None, scheduler=None, rng=None,
+          allow_external_ai: bool = True, bedrock_factory=None) -> App:
     http = http or UrllibHttp()
     settings = Settings(repo)
     logger = Logger(repo, now)
@@ -45,9 +46,9 @@ def build(repo, secrets, x, http: Http | None = None, now=utcnow, sleep=None) ->
     templates.seed_if_empty()
     kw = {"sleep": sleep} if sleep else {}
     tokens = TokenManager(repo, secrets, settings, x, logger, now, **kw)
-    ai = AIService(settings, secrets, http, logger)
+    ai = AIService(settings, secrets, http, logger, allow_external=allow_external_ai, bedrock_factory=bedrock_factory)
     notifier = Notifier(settings, secrets, http, logger)
-    jobs = JobRunner(repo, settings, tokens, x, ai, templates, notifier, logger, now)
+    jobs = JobRunner(repo, settings, tokens, x, ai, templates, notifier, logger, now, scheduler=scheduler, rng=rng)
     sender = Sender(repo, settings, tokens, x, templates, logger, now)
     return App(repo, secrets, settings, x, http, logger, templates, tokens, ai, notifier, jobs, sender, now)
 
@@ -60,12 +61,19 @@ def build_local(data_dir: str = ".xronix", mode: str | None = None) -> App:
     mode = mode or os.environ.get("XRONIX_X_MODE", "mock")
     http = UrllibHttp()
     x = MockX() if mode == "mock" else LiveX(http)
-    return build(SqliteRepo(os.path.join(data_dir, "xronix.db")), FileSecrets(os.path.join(data_dir, "secrets.json")), x, http)
+    # モックモード（動作確認）では、外部のAIを呼ばない
+    return build(SqliteRepo(os.path.join(data_dir, "xronix.db")), FileSecrets(os.path.join(data_dir, "secrets.json")), x, http,
+                 allow_external_ai=mode != "mock")
 
 
 def build_aws() -> App:
     from .repo import DynamoRepo
     from .secrets import SsmSecrets
 
+    from .scheduler import AwsScheduler, NullScheduler
+
     http = UrllibHttp()
-    return build(DynamoRepo(os.environ["XRONIX_TABLE"]), SsmSecrets(os.environ.get("XRONIX_SSM_PREFIX", "/xronix/")), LiveX(http), http)
+    scheduler = (AwsScheduler(os.environ["XRONIX_JOB_ARN"], os.environ["XRONIX_SCHEDULER_ROLE_ARN"], os.environ["XRONIX_SCHEDULE_PREFIX"])
+                 if os.environ.get("XRONIX_JOB_ARN") else NullScheduler())
+    return build(DynamoRepo(os.environ["XRONIX_TABLE"]), SsmSecrets(os.environ.get("XRONIX_SSM_PREFIX", "/xronix/")), LiveX(http), http,
+                 scheduler=scheduler)
