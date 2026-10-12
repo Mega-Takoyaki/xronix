@@ -11,6 +11,7 @@ from .classify import CATEGORIES, LABELS
 from .events import ALL_EVENTS, LABELS as EVENT_LABELS, is_metric
 from .rules import ACTION_LABELS, METRIC_ACTIONS, REPLY_ACTIONS, SOURCES
 from .common import iso, jst_date, new_id, parse_iso
+from .notify import NotifyError
 from .sender import SendRefused
 from .settings import ValidationError
 from .xclient import AuthRequired, XError, authorize_url, make_pkce
@@ -52,6 +53,7 @@ class Api:
             ("POST", r"/api/rules/(?P<id>\w+)/move", self.move_rule),
             ("POST", r"/api/dev/mock-posts", self.mock_posts),
             ("POST", r"/api/notify/test", self.notify_test),
+            ("POST", r"/api/notify/detect-chat", self.notify_detect_chat),
             ("POST", r"/api/kill", self.kill),
             ("GET", r"/api/mentions", self.list_mentions),
             ("POST", r"/api/mentions/(?P<id>\w+)/reply", self.reply),
@@ -91,7 +93,7 @@ class Api:
                 return _err(str(e), 409)
             except AuthRequired as e:
                 return _err(str(e), 400)
-            except (XError, AIError) as e:
+            except (XError, AIError, NotifyError) as e:
                 return _err(str(e), 502)
         return _err("見つかりません", 405 if path_matched else 404)
 
@@ -241,6 +243,11 @@ class Api:
     def notify_test(self, q, b) -> Result:
         ok, reason = self.app.notifier.send("XroniX: 通知のテストです。")
         return _ok({"sent": ok, "reason": reason})
+
+    def notify_detect_chat(self, q, b) -> Result:
+        """ボットに届いたメッセージから、チャットIDを探す。先にボットへメッセージを送っておく。"""
+        chats = self.app.notifier.detect_chats()
+        return _ok({"chats": chats})
 
     def kill(self, q, b) -> Result:
         on = bool(b.get("on"))
