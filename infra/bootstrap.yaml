@@ -8,6 +8,12 @@ Parameters:
     Type: String
     Default: Mega-Takoyaki/xronix
     Description: 「組織またはユーザー名/リポジトリ名」
+  GitHubSubject:
+    Type: String
+    Default: repo:Mega-Takoyaki@22055197/xronix@1415292133
+    Description: >-
+      OIDCトークンの sub のうち、環境名より前の部分。
+      このリポジトリのsubはIDを含む形式（リポジトリ名の変更や乗っ取りに強い）。実際の値はトークンの内容で確認した
   EnvironmentName:
     Type: String
     Default: staging
@@ -67,7 +73,7 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:${EnvironmentName}
+                token.actions.githubusercontent.com:sub: !Sub ${GitHubSubject}:environment:${EnvironmentName}
       Policies:
         - PolicyName: deploy
           PolicyDocument:
