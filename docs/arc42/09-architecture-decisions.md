@@ -12,3 +12,4 @@
 | [0006](../adr/0006-no-retry-on-create.md) | 投稿作成をリトライしない | 採用 |
 | [0007](../adr/0007-no-vpc.md) | LambdaをVPCに入れない | 採用 |
 | [0008](../adr/0008-dedicated-x-app.md) | 専用のXアプリを使う | 採用 |
+| [0009](../adr/0009-ui-settings-and-job-control.md) | 設定は画面から行い、定期処理は短い間隔の起動＋設定上の間隔で制御する | 採用 |

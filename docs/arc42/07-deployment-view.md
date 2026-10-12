@@ -9,7 +9,8 @@
 | API | API Gateway HTTP API。JWTオーソライザー（Cognito） |
 | データ | DynamoDB オンデマンド |
 | 秘密情報 | SSM Parameter Store SecureString |
-| 初回のX認可 | 運用者のPCでワンショットのスクリプトを実行し（ループバックのコールバック）、取得したトークンをSSMへ登録する |
+| 初回のX認可 | 画面の「Xと接続」から行う。コールバックはAPIの `/api/x/callback`（ADR-0009） |
+| 定期起動 | EventBridge Scheduler が15分ごとに起動し、設定上の間隔に達したときだけ実行する |
 
 ## 費用の見込み（月額、概算。推測を含む）
 

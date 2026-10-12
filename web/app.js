@@ -55,12 +55,12 @@ async function refreshStatus() {
   const banner = $("#banner");
   banner.hidden = status.mode !== "mock" && !status.auth_error;
   banner.textContent = status.auth_error ? "Xの認可が切れています。設定でXと再接続してください。" : "モックモードです。Xへは何も送信されません。";
-  const chips = $("#chips"); chips.replaceChildren(
+  $("#chips").replaceChildren(...[
     h("span", { class: "chip " + (status.x_connected ? "good" : "bad") }, status.x_connected ? `X: @${status.username}` : "X: 未接続"),
     h("span", { class: "chip" }, `本日の送信 ${status.sent_today}/${status.daily_limit}`),
     h("span", { class: "chip " + (status.job_enabled ? "good" : "") }, status.job_enabled ? `定期処理: 次回 ${fmt(status.next_due)}` : "定期処理: 停止中"),
     status.unknown ? h("span", { class: "chip bad" }, `結果不明 ${status.unknown}件`) : null,
-  );
+  ].filter(Boolean));
   $("#n-queue").textContent = status.pending || "";
   const k = $("#kill");
   k.textContent = status.kill_switch ? "緊急停止中（解除）" : "緊急停止";
@@ -174,7 +174,7 @@ async function renderJobs() {
       h("div", { class: "grow" }, lbl("初回の動作", "初回の実行だけに使います。現在地点から始めると、過去のメンションへの返信案は作られません。"), initial)),
     h("div", { class: "row end", style: "margin-top:12px" },
       h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/job", { enabled: enabled.checked, interval_minutes: +interval.value, max_pages: +pages.value, initial_mode: initial.value }), "保存しました"); await refreshStatus(); renderJobs(); } }, "保存"),
-      h("button", { class: "primary", onclick: async (e) => { e.target.disabled = true; const r = await act(() => api("POST", "/api/jobs/run"), null); if (r) toast(`${r.status === "ok" ? "完了" : "未完了"}: ${r.message}`, r.status === "error"); await refreshStatus(); renderJobs(); } }, "今すぐ実行")),
+      h("button", { class: "primary", onclick: async (e) => { e.target.disabled = true; const r = await act(() => api("POST", "/api/jobs/run"), null); if (r) toast(r.status === "ok" ? `完了しました（新規${r.new}件）` : r.message, r.status !== "ok"); await refreshStatus(); renderJobs(); } }, "今すぐ実行")),
     h("div", { class: "muted" }, `次回の実行予定: ${s.enabled ? fmt(d.next_due) : "停止中"}`));
   const dev = status.mode === "mock" ? h("div", { class: "card" }, h("h3", {}, "動作確認（モック専用）", tip("モックの取得キューへ、サンプルのメンションを追加します。「今すぐ実行」で取り込まれます。")),
     h("button", { onclick: async () => { await act(() => api("POST", "/api/dev/mock-mentions", { count: 4 }), "サンプルを4件追加しました"); } }, "サンプルのメンションを追加")) : null;
@@ -185,6 +185,7 @@ async function renderJobs() {
 }
 
 // ---------- 統計・ログ ----------
+const KIND = { job: "ジョブ", send: "送信", token: "トークン", x: "X接続", settings: "設定", ai: "AI", notify: "通知", safety: "安全装置", blocklist: "ブロック対象" };
 async function renderStats() {
   const [s, l] = await Promise.all([api("GET", "/api/stats"), api("GET", "/api/logs")]);
   const max = Math.max(1, ...s.received, ...s.sent);
@@ -199,10 +200,10 @@ async function renderStats() {
   const lvl = h("select", { onchange: async (e) => { const r = await api("GET", `/api/logs?level=${e.target.value}`); fill(r.items); } },
     [["", "すべて"], ["info", "情報"], ["warn", "警告"], ["error", "エラー"]].map(([v, t]) => h("option", { value: v }, t)));
   const tbody = h("tbody");
-  const fill = (items) => tbody.replaceChildren(...items.map((r) => h("tr", {}, h("td", {}, fmt(r.ts)), h("td", { class: r.level === "error" ? "err" : r.level === "warn" ? "warn" : "" }, { info: "情報", warn: "警告", error: "エラー" }[r.level]), h("td", {}, r.kind), h("td", {}, r.message))));
+  const fill = (items) => tbody.replaceChildren(...items.map((r) => h("tr", {}, h("td", {}, fmt(r.ts)), h("td", { class: r.level === "error" ? "err" : r.level === "warn" ? "warn" : "" }, { info: "情報", warn: "警告", error: "エラー" }[r.level]), h("td", {}, KIND[r.kind] || r.kind), h("td", {}, r.message))));
   fill(l.items);
   const logs = h("div", { class: "card" }, h("div", { class: "row" }, h("h3", { class: "grow" }, "ログ", tip("操作とジョブの記録です。60日で自動的に削除されます。トークンや返信の本文は記録しません。")), lvl),
-    h("table", {}, h("thead", {}, h("tr", {}, ["日時", "種別", "区分", "内容"].map((c) => h("th", {}, c)))), tbody));
+    h("table", {}, h("thead", {}, h("tr", {}, ["日時", "レベル", "種類", "内容"].map((c) => h("th", {}, c)))), tbody));
   view.replaceChildren(tiles, bars, cats, logs);
 }
 
@@ -215,7 +216,7 @@ function secretField(name, label, tipText, secrets, onChange) {
 }
 
 async function renderSettings() {
-  const s = await api("GET", "/api/settings"), reload = () => { refreshStatus(); renderSettings(); };
+  const s = await api("GET", "/api/settings"), reload = async () => { await refreshStatus(); renderSettings(); };
   const params = new URLSearchParams(location.search);
   if (params.get("x")) { toast({ ok: "Xと接続しました", denied: "Xでの認可が拒否されました", invalid: "認可の期限が切れました。もう一度お試しください", failed: "接続に失敗しました。ログを確認してください" }[params.get("x")] || "", params.get("x") !== "ok"); history.replaceState(null, "", "/"); }
 

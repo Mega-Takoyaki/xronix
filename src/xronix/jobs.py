@@ -68,7 +68,7 @@ class JobRunner:
         if record:
             self.repo.put("runs", run["id"], run)
             self.repo.put("state", "job", {**self.state(), "last_status": status})
-            (self.log.info if status == "ok" else self.log.error)("job", f"ジョブ{status}: {message}", run_id=run["id"], trigger=run["trigger"])
+            (self.log.info if status == "ok" else self.log.error)("job", f"ジョブ{ {'ok': '成功', 'error': '失敗', 'skipped': 'スキップ'}[status] }: {message}", run_id=run["id"], trigger=run["trigger"])
         return run
 
     # --- 本体 ---
