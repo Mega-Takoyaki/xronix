@@ -74,7 +74,7 @@ jobs:
           sam deploy \
             --stack-name "$STACK" \
             --s3-bucket "$ARTIFACT_BUCKET" --s3-prefix "$STACK" \
-            --capabilities CAPABILITY_IAM \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
             --no-confirm-changeset --no-fail-on-empty-changeset \
             --parameter-overrides "BasicAuthHash=$HASH"
 

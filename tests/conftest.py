@@ -36,13 +36,50 @@ class FakeHttp:
         return r
 
 
+class FakeBedrock:
+    """bedrock-runtimeのconverseの偽物。応答テキストのキューか、例外を返す。"""
+    def __init__(self): self.calls, self.queue = [], []
+    def push_text(self, text): self.queue.append({"output": {"message": {"content": [{"text": text}]}}})
+    def push_error(self, code="AccessDeniedException", message="denied"):
+        from botocore.exceptions import ClientError
+        self.queue.append(ClientError({"Error": {"Code": code, "Message": message}}, "Converse"))
+    def converse(self, **kw):
+        self.calls.append(kw)
+        r = self.queue.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+class FakeScheduler:
+    """次回実行の登録を記録する。"""
+    def __init__(self): self.armed, self.cancelled, self.fail = [], [], False
+    def arm(self, when):
+        if self.fail:
+            raise RuntimeError("scheduler down")
+        self.armed.append(when)
+        return f"sched-{len(self.armed)}"
+    def cancel(self, name): self.cancelled.append(name)
+
+
 @pytest.fixture
 def clock(): return Clock()
 
 
 @pytest.fixture
-def app(clock):
-    a = build(SqliteRepo(":memory:"), FakeSecrets(), MockX(), FakeHttp(), now=clock, sleep=lambda s: None)
+def bedrock(): return FakeBedrock()
+
+
+@pytest.fixture
+def scheduler(): return FakeScheduler()
+
+
+@pytest.fixture
+def app(clock, bedrock, scheduler):
+    import random
+    a = build(SqliteRepo(":memory:"), FakeSecrets(), MockX(), FakeHttp(), now=clock, sleep=lambda s: None,
+              scheduler=scheduler, rng=random.Random(7), bedrock_factory=lambda region: bedrock)
+    a.settings.update("ai", {"provider": "rule"})  # 既定はBedrockだが、ルール判定を前提にしたテストが多いため固定する（AIのテストは明示的に切り替える）
     return a
 
 

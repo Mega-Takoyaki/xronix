@@ -15,6 +15,7 @@ from .xclient import AuthRequired, XError, authorize_url, make_pkce
 from .secrets import NAMES
 
 Result = tuple[int, dict, dict]  # status, body, headers
+EDITABLE_SECRETS = ("x_client_secret", "openai_api_key", "telegram_bot_token")
 
 
 def _ok(body=None, status=200, headers=None) -> Result:
@@ -110,10 +111,13 @@ class Api:
         return _ok(s)
 
     def put_settings(self, q, b, section) -> Result:
-        return _ok(self.app.settings.update(section, b))
+        cur = self.app.settings.update(section, b)
+        if section in ("job", "safety"):
+            self.app.jobs.plan("settings")  # 間隔・ずらし幅・有効/無効の変更を、次回の実行予定に反映する
+        return _ok(cur)
 
     def put_secret(self, q, b, name) -> Result:
-        if name not in ("x_client_secret", "ai_api_key", "discord_webhook"):
+        if name not in EDITABLE_SECRETS:
             return _err("この項目は画面から設定できません", 404)
         value = str(b.get("value", "")).strip()
         if not value:
@@ -123,7 +127,7 @@ class Api:
         return _ok()
 
     def delete_secret(self, q, b, name) -> Result:
-        if name not in ("x_client_secret", "ai_api_key", "discord_webhook"):
+        if name not in EDITABLE_SECRETS:
             return _err("この項目は画面から削除できません", 404)
         self.app.secrets.delete(name)
         self.app.logger.info("settings", f"{name} を削除しました")
@@ -184,13 +188,13 @@ class Api:
         return _ok(self.app.ai.test())
 
     def notify_test(self, q, b) -> Result:
-        if not self.app.secrets.get("discord_webhook"):
-            return _err("Webhook URLが設定されていません")
-        return _ok({"sent": self.app.notifier.send("XroniX: 通知のテストです。")})
+        ok, reason = self.app.notifier.send("XroniX: 通知のテストです。")
+        return _ok({"sent": ok, "reason": reason})
 
     def kill(self, q, b) -> Result:
         on = bool(b.get("on"))
         self.app.settings.update("safety", {"kill_switch": on})
+        self.app.jobs.plan("kill")  # 停止中は予定を取り消し、解除すると再登録する
         self.app.logger.warn("safety", "緊急停止を" + ("有効にしました" if on else "解除しました"))
         return _ok({"kill_switch": on})
 

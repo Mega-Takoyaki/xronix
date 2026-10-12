@@ -28,18 +28,47 @@ def test_text_helpers():
 
 def test_settings_validation(app):
     s = app.settings
-    assert s.update("job", {"interval_minutes": 30})["interval_minutes"] == 30
-    with pytest.raises(ValidationError):
-        s.update("job", {"interval_minutes": 5})
+    assert s.update("job", {"interval_minutes": 1})["interval_minutes"] == 1
+    assert s.update("job", {"interval_minutes": 999})["interval_minutes"] == 999
+    for bad in (0, 1000, -5):
+        with pytest.raises(ValidationError):
+            s.update("job", {"interval_minutes": bad})
+    assert s.update("job", {"jitter_minutes": 99})["jitter_minutes"] == 99
+    assert s.update("job", {"jitter_minutes": 0})["jitter_minutes"] == 0     # 0はずらさない
+    for bad in (-1, 100):
+        with pytest.raises(ValidationError):
+            s.update("job", {"jitter_minutes": bad})
     with pytest.raises(ValidationError):
         s.update("job", {"enabled": "yes"})
     with pytest.raises(ValidationError):
-        s.update("ai", {"provider": "claude"})
+        s.update("job", {"interval_minutes": "30"})
+    with pytest.raises(ValidationError):
+        s.update("ai", {"provider": "grok"})
+    with pytest.raises(ValidationError):
+        s.update("ai", {"bedrock_region": "Tokyo"})
+    with pytest.raises(ValidationError):
+        s.update("ai", {"bedrock_model": ""})
     with pytest.raises(ValidationError):
         s.update("safety", {"daily_limit": 1000})
     with pytest.raises(ValidationError):
         s.update("x", {"redirect_uri": "http://evil.example/cb"})
+    with pytest.raises(ValidationError):
+        s.update("notify", {"telegram_chat_id": "not an id"})
+    with pytest.raises(ValidationError):
+        s.update("notify", {"site_url": "http://insecure.example"})
+    assert s.update("notify", {"telegram_chat_id": "-1001234567890"})["telegram_chat_id"] == "-1001234567890"
     assert s.update("x", {"client_id": "abc", "evil": "x"}).get("evil") is None
+
+
+def test_ai_defaults_to_bedrock_and_old_values_fall_back():
+    from conftest import FakeSecrets
+    from xronix.repo import SqliteRepo
+    from xronix.settings import Settings
+    st = Settings(SqliteRepo(":memory:"))
+    ai = st.get("ai")
+    assert ai["provider"] == "bedrock" and ai["mode"] == "classify" and ai["bedrock_region"] == "ap-northeast-1"
+    st.repo.put("settings", "ai", {"provider": "grok"})    # 廃止した選択肢が保存されていても既定に戻る
+    assert st.get("ai")["provider"] == "bedrock"
 
 
 def test_lease_exclusive(app, clock):

@@ -7,13 +7,15 @@ flowchart LR
     Op[運用者（1人）]
     XroniX[XroniX]
     X[X API api.x.com]
-    Notify[通知先（メール／Discord／LINE）]
+    Notify[Telegram]
+    AI[Amazon Bedrock／OpenAI]
     Fans[フォロワー・他ユーザー]
 
     Fans -- 返信・メンション --> X
     XroniX -- 取得 --> X
     XroniX -- 返信送信 --> X
     XroniX -- 新着通知 --> Notify
+    XroniX -- 分類・返信案 --> AI
     Notify --> Op
     Op -- 承認・却下 --> XroniX
 ```
