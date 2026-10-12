@@ -6,6 +6,10 @@ import json
 from .http import Http, NetworkError
 
 
+class NotifyError(Exception):
+    pass
+
+
 class Notifier:
     def __init__(self, settings, secrets, http: Http, logger):
         self.settings, self.secrets, self.http, self.log = settings, secrets, http, logger
@@ -37,6 +41,39 @@ class Notifier:
             reason = ""
         self.log.warn("notify", f"Telegramへの通知に失敗しました（HTTP {r.status}）: {reason}")
         return False, f"Telegramがエラーを返しました（HTTP {r.status}）: {reason}"
+
+    def detect_chats(self) -> list[dict]:
+        """ボットに届いた最近のメッセージから、チャット（ID・種類・名前）の一覧を作る。新しい順。
+
+        ボットに、先にメッセージを送っておく必要がある。個人とのチャットでは、チャットIDはユーザーIDと同じ。
+        """
+        token = self.secrets.get("telegram_bot_token")
+        if not token:
+            raise NotifyError("先にボットトークンを保存してください")
+        try:
+            r = self.http.request("GET", f"https://api.telegram.org/bot{token}/getUpdates?limit=100", timeout=10)
+        except NetworkError:
+            raise NotifyError("Telegramに接続できませんでした") from None
+        if r.status != 200:
+            try:
+                reason = json.loads(r.body).get("description", "")
+            except ValueError:
+                reason = ""
+            hint = {401: "（ボットトークンが正しくありません）", 409: "（ボットにWebhookが設定されているため、取得できません）"}.get(r.status, "")
+            raise NotifyError(f"Telegramがエラーを返しました（HTTP {r.status}）{hint}: {reason}")
+        try:
+            updates = json.loads(r.body).get("result", [])
+        except ValueError:
+            raise NotifyError("Telegramの応答を読めませんでした") from None
+        seen: dict[str, dict] = {}
+        for u in reversed(updates):  # 新しいものを先に
+            for key in ("message", "edited_message", "channel_post", "my_chat_member"):
+                chat = (u.get(key) or {}).get("chat")
+                if chat and str(chat.get("id")) not in seen:
+                    name = chat.get("title") or " ".join(x for x in (chat.get("first_name"), chat.get("last_name")) if x) or chat.get("username", "")
+                    seen[str(chat["id"])] = {"id": str(chat["id"]), "type": chat.get("type", ""), "name": name,
+                                             "username": chat.get("username", "")}
+        return list(seen.values())
 
     def notify_text(self, text: str) -> bool:
         """任意の文面を、通知が有効なときだけ送る。画面のURLが設定されていれば添える。"""

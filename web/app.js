@@ -315,12 +315,22 @@ async function renderSettings() {
   // 通知
   const tgOn = h("input", { type: "checkbox", checked: s.notify.telegram_enabled });
   const tgChat = h("input", { type: "text", placeholder: "例: 123456789" }); tgChat.value = s.notify.telegram_chat_id;
+  const chatList = h("div", { style: "flex:1" });
   const siteUrl = h("input", { type: "text", placeholder: "https://…（任意）" }); siteUrl.value = s.notify.site_url;
   const ncard = h("div", { class: "card" }, h("h3", {}, "通知（Telegram）", tip("承認待ちの件数だけを送ります。返信の本文は送りません。")),
     h("label", { class: "inline" }, tgOn, "新着があったら通知する"),
     secretField("telegram_bot_token", "ボットトークン", "Telegramの BotFather でボットを作ると発行されます。画面には表示されません。", s.secrets, reload),
     h("div", { class: "row" },
-      h("div", { class: "grow" }, lbl("チャットID", "作ったボットに何かメッセージを送ってから、ブラウザで https://api.telegram.org/bot（トークン）/getUpdates を開くと、chat の id が分かります。グループの場合は -100 から始まる数字です。"), tgChat),
+      h("div", { class: "grow" }, lbl("チャットID", "個人とのチャットでは、あなたのユーザーIDと同じ数字です。分かっていれば、そのまま入力できます。分からなければ、ボットに何かメッセージを送ってから、「自動で取得」を押してください。ボットに、先に「開始」を押していないと、通知は届きません。"), tgChat,
+        h("div", { class: "row", style: "margin-top:6px" }, h("button", { onclick: async () => {
+          const r = await act(() => api("POST", "/api/notify/detect-chat"));
+          if (!r) return;
+          if (!r.chats.length) return toast("ボットにメッセージが届いていません。ボットに何か送ってから、もう一度押してください", true);
+          const pick = (c) => { tgChat.value = c.id; chatList.replaceChildren(h("div", { class: "ok" }, `入力しました: ${c.name || c.username || c.id}（${c.id}）。「保存」を押してください。`)); };
+          if (r.chats.length === 1) return pick(r.chats[0]);
+          chatList.replaceChildren(h("div", { class: "muted" }, "複数見つかりました。通知を送るチャットを選んでください。"),
+            ...r.chats.map((c) => h("div", { class: "row" }, h("button", { onclick: () => pick(c) }, "選ぶ"), h("span", {}, `${c.name || c.username || "（名前なし）"}　${c.type}　${c.id}`))));
+        } }, "自動で取得"), chatList)),
       h("div", { class: "grow" }, lbl("画面のURL（任意）", "入力すると、通知にこのURLを添えます。"), siteUrl)),
     h("div", { class: "row end", style: "margin-top:10px" },
       h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/notify", { telegram_enabled: tgOn.checked, telegram_chat_id: tgChat.value, site_url: siteUrl.value }), "保存しました"); } }, "保存"),

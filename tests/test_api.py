@@ -346,3 +346,45 @@ def test_lambda_handlers_end_to_end(monkeypatch):
         lh._api.app.repo.update_if("state", "job", {"next_run_at": "2000-01-01T00:00:00.000Z"})
         assert lh.job_handler({"source": "schedule"}) == {"ran": True, "status": "error"}
         lh._api = None
+
+
+# --- Telegramのチャットの自動検出 ---
+def updates(*chats):
+    out = []
+    for i, (key, chat) in enumerate(chats):
+        out.append({"update_id": i, key: {"message_id": i, "chat": chat, "text": "hi"}})
+    return {"ok": True, "result": out}
+
+
+def test_detect_chat_lists_recent_chats_newest_first_without_leaking_token(app):
+    api = Api(app)
+    call(api, "PUT", "/api/secrets/telegram_bot_token", {"value": "123:SECRET-TOKEN"})
+    app.http.push(200, updates(
+        ("message", {"id": 1, "type": "private", "first_name": "古い", "last_name": "人"}),
+        ("message", {"id": 42, "type": "private", "first_name": "太郎", "username": "taro"}),
+        ("my_chat_member", {"id": -100777, "type": "supergroup", "title": "運用グループ"}),
+        ("message", {"id": 42, "type": "private", "first_name": "太郎", "username": "taro"}),   # 同じチャットは1件にまとめる
+    ))
+    st, body = call(api, "POST", "/api/notify/detect-chat")
+    assert st == 200
+    assert [c["id"] for c in body["chats"]] == ["42", "-100777", "1"]                          # 新しい順
+    assert body["chats"][0] == {"id": "42", "type": "private", "name": "太郎", "username": "taro"}
+    assert body["chats"][1]["name"] == "運用グループ"
+    assert app.http.calls[-1]["url"].startswith("https://api.telegram.org/bot123:SECRET-TOKEN/getUpdates") and app.http.calls[-1]["method"] == "GET"
+    assert "SECRET-TOKEN" not in json.dumps(body, ensure_ascii=False)
+
+
+def test_detect_chat_errors_are_explained(app):
+    api = Api(app)
+    st, body = call(api, "POST", "/api/notify/detect-chat")
+    assert st == 502 and "ボットトークン" in body["error"]                                     # トークン未設定
+    call(api, "PUT", "/api/secrets/telegram_bot_token", {"value": "tok"})
+    app.http.push(200, {"ok": True, "result": []})
+    assert call(api, "POST", "/api/notify/detect-chat")[1] == {"chats": []}                     # メッセージ未着は、空の一覧
+    app.http.push(401, {"ok": False, "description": "Unauthorized"})
+    st, body = call(api, "POST", "/api/notify/detect-chat")
+    assert st == 502 and "正しくありません" in body["error"] and "tok" not in body["error"].replace("トークン", "")
+    app.http.push(409, {"ok": False, "description": "Conflict: can't use getUpdates method while webhook is active"})
+    assert "Webhook" in call(api, "POST", "/api/notify/detect-chat")[1]["error"]
+    app.http.push_error()
+    assert "接続できません" in call(api, "POST", "/api/notify/detect-chat")[1]["error"]
