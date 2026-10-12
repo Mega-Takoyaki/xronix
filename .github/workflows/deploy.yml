@@ -1,0 +1,115 @@
+name: deploy-staging
+
+# mainへのpushで、テスト → 検証環境へデプロイ → 動作確認 まで自動で行う。
+# GitHubの Environment「staging」に、変数 AWS_ROLE_ARN・ARTIFACT_BUCKET と、
+# シークレット BASIC_AUTH_USER・BASIC_AUTH_PASSWORD を設定しておくこと（docs/guide/aws-staging-setup.md）。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "web/**"
+      - "template.yaml"
+      - "pyproject.toml"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  STACK: xronix-staging
+  AWS_REGION: ap-northeast-1
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Basic認証のハッシュを作る
+        id: auth
+        env:
+          BASIC_AUTH_USER: ${{ secrets.BASIC_AUTH_USER }}
+          BASIC_AUTH_PASSWORD: ${{ secrets.BASIC_AUTH_PASSWORD }}
+        run: |
+          test -n "$BASIC_AUTH_USER" && test -n "$BASIC_AUTH_PASSWORD" || { echo "BASIC_AUTH_USER / BASIC_AUTH_PASSWORD が未設定です"; exit 1; }
+          HASH=$(printf '%s:%s' "$BASIC_AUTH_USER" "$BASIC_AUTH_PASSWORD" | sha256sum | cut -d' ' -f1)
+          echo "::add-mask::$HASH"
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+      - run: sam build
+
+      - name: デプロイ
+        env:
+          ARTIFACT_BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+          HASH: ${{ steps.auth.outputs.hash }}
+        run: |
+          sam deploy \
+            --stack-name "$STACK" \
+            --s3-bucket "$ARTIFACT_BUCKET" --s3-prefix "$STACK" \
+            --capabilities CAPABILITY_IAM \
+            --no-confirm-changeset --no-fail-on-empty-changeset \
+            --parameter-overrides "BasicAuthHash=$HASH"
+
+      - name: スタックの出力を読む
+        id: out
+        run: |
+          q() { aws cloudformation describe-stacks --stack-name "$STACK" --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+          echo "site=$(q SiteUrl)" >> "$GITHUB_OUTPUT"
+          echo "bucket=$(q SiteBucketName)" >> "$GITHUB_OUTPUT"
+          echo "callback=$(q XCallbackUrl)" >> "$GITHUB_OUTPUT"
+
+      - name: 画面を配信する（S3へ同期）
+        run: aws s3 sync web "s3://${{ steps.out.outputs.bucket }}" --delete
+
+      - name: 動作確認
+        env:
+          SITE: ${{ steps.out.outputs.site }}
+          U: ${{ secrets.BASIC_AUTH_USER }}
+          P: ${{ secrets.BASIC_AUTH_PASSWORD }}
+        run: |
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          for i in 1 2 3 4 5 6; do [ "$(code "$SITE/")" = "401" ] && break; sleep 10; done
+          echo "認証なし（画面）:     $(code "$SITE/")      期待: 401"
+          echo "認証なし（API）:      $(code "$SITE/api/status") 期待: 401"
+          echo "認証あり（画面）:     $(code -u "$U:$P" "$SITE/")      期待: 200"
+          [ "$(code "$SITE/")" = "401" ]
+          [ "$(code "$SITE/api/status")" = "401" ]
+          [ "$(code -u "$U:$P" "$SITE/")" = "200" ]
+          curl -sf -u "$U:$P" "$SITE/api/status" | tee /tmp/status.json
+          python3 -c 'import json; d=json.load(open("/tmp/status.json")); assert d["mode"]=="live" and d["kill_switch"] is False, d'
+
+      - name: 結果の要約
+        run: |
+          {
+            echo "### 検証環境へのデプロイが完了しました"
+            echo "- 画面: ${{ steps.out.outputs.site }}"
+            echo "- Xのコールバック URL（Xの開発者コンソールに登録）: ${{ steps.out.outputs.callback }}"
+          } >> "$GITHUB_STEP_SUMMARY"
