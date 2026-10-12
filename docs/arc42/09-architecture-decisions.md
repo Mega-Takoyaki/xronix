@@ -17,3 +17,5 @@
 | [0011](../adr/0011-ai-bedrock-default.md) | AIの既定を Amazon Bedrock にし、OpenAI も選べるようにする | 採用 |
 | [0012](../adr/0012-notify-telegram.md) | 通知は Telegram にする | 採用 |
 | [0013](../adr/0013-precise-scheduling.md) | 次回実行を秒単位の一回限りのスケジュールで登録する | 採用 |
+| [0014](../adr/0014-rules-and-actions.md) | 反応の種類ごとに、実行するアクションをルールで設定する | 採用 |
+| [0015](../adr/0015-bedrock-model-list.md) | Bedrockのモデルを、使える一覧から選び、既定は安価なモデルを自動で選ぶ | 採用 |

@@ -8,6 +8,8 @@ from . import stats as stats_mod
 from .ai import AIError
 from .app import App
 from .classify import CATEGORIES, LABELS
+from .events import ALL_EVENTS, LABELS as EVENT_LABELS, is_metric
+from .rules import ACTION_LABELS, METRIC_ACTIONS, REPLY_ACTIONS, SOURCES
 from .common import iso, jst_date, new_id, parse_iso
 from .sender import SendRefused
 from .settings import ValidationError
@@ -41,6 +43,14 @@ class Api:
             ("POST", r"/api/x/disconnect", self.x_disconnect),
             ("POST", r"/api/x/test", self.x_test),
             ("POST", r"/api/ai/test", self.ai_test),
+            ("GET", r"/api/ai/models", self.ai_models),
+            ("GET", r"/api/rules", self.list_rules),
+            ("POST", r"/api/rules", self.create_rule),
+            ("POST", r"/api/rules/simulate", self.simulate_rule),
+            ("PUT", r"/api/rules/(?P<id>\w+)", self.update_rule),
+            ("DELETE", r"/api/rules/(?P<id>\w+)", self.delete_rule),
+            ("POST", r"/api/rules/(?P<id>\w+)/move", self.move_rule),
+            ("POST", r"/api/dev/mock-posts", self.mock_posts),
             ("POST", r"/api/notify/test", self.notify_test),
             ("POST", r"/api/kill", self.kill),
             ("GET", r"/api/mentions", self.list_mentions),
@@ -187,6 +197,47 @@ class Api:
     def ai_test(self, q, b) -> Result:
         return _ok(self.app.ai.test())
 
+    def ai_models(self, q, b) -> Result:
+        """Bedrockで、いま使えるモデルの一覧。選択中のモデルと、自動で選ばれるモデルも返す。"""
+        out = self.app.ai.list_models(refresh=q.get("refresh") == "1")
+        out["selected"] = self.app.settings.get("ai")["bedrock_model"]
+        return _ok(out)
+
+    # --- ルール ---
+    def list_rules(self, q, b) -> Result:
+        meta = {
+            "events": [{"key": e, "label": EVENT_LABELS[e], "metric": is_metric(e)} for e in ALL_EVENTS],
+            "actions": [{"key": k, "label": v, "metric_ok": k in METRIC_ACTIONS, "reply": k in REPLY_ACTIONS} for k, v in ACTION_LABELS.items()],
+            "sources": {k: list(v) for k, v in SOURCES.items()},
+            "categories": [{"key": k, "label": LABELS[k]} for k in CATEGORIES],
+        }
+        return _ok({"items": self.app.rules.list(), "meta": meta})
+
+    def create_rule(self, q, b) -> Result:
+        return _ok(self.app.rules.create(b), 201)
+
+    def update_rule(self, q, b, id) -> Result:
+        r = self.app.rules.update(id, b)
+        return _ok(r) if r else _err("見つかりません", 404)
+
+    def delete_rule(self, q, b, id) -> Result:
+        self.app.rules.delete(id)
+        return _ok()
+
+    def move_rule(self, q, b, id) -> Result:
+        self.app.rules.move(id, str(b.get("direction", "")))
+        return _ok()
+
+    def simulate_rule(self, q, b) -> Result:
+        """設定の確認用。反応の種類と分類を指定すると、どのルールが働くかを返す（何も実行しない）。"""
+        kind, cat = b.get("event"), b.get("category", "other")
+        if kind not in ALL_EVENTS or is_metric(kind):
+            return _err("返信・引用・メンションの種類を指定してください")
+        if cat not in CATEGORIES:
+            return _err("分類の指定が不正です")
+        r = self.app.rules.match(kind, cat)
+        return _ok({"rule": None if not r else {"id": r["id"], "name": r["name"], "actions": [ACTION_LABELS[a["type"]] for a in r["actions"]]}})
+
     def notify_test(self, q, b) -> Result:
         ok, reason = self.app.notifier.send("XroniX: 通知のテストです。")
         return _ok({"sent": ok, "reason": reason})
@@ -207,8 +258,10 @@ class Api:
         else:
             rows = [m for m in rows if m["state"] not in ("pending", "review")]
         blocked = {x["id"] for x in self.app.repo.list("blocklist")}
+        rows.sort(key=lambda m: m["fetched_at"], reverse=True)
         for m in rows[:200]:
             m["label"] = LABELS.get(m["category"], m["category"])
+            m["kind_label"] = EVENT_LABELS.get(m.get("kind", ""), "")
             m["author_blocked"] = m["author_id"] in blocked
         return _ok({"items": rows[:200]})
 
@@ -344,14 +397,20 @@ class Api:
         if not self.app.mock:
             return _err("モックモードでのみ使えます", 404)
         samples = [
-            "いつも可愛い投稿ありがとうございます！応援してます😍",
-            "この写真はどこで撮影したんですか？",
-            "副業で月100万稼げる方法教えます https://example.com/xxx",
-            "DM送ってもいいですか？会いたいです",
-            "今日もお疲れさまです",
-            "新作楽しみにしてます！最高です",
+            ("いつも可愛い投稿ありがとうございます！応援してます😍", "reply_to_post"),
+            ("この写真はどこで撮影したんですか？", "reply_to_reply"),
+            ("副業で月100万稼げる方法教えます https://example.com/xxx", "mention"),
+            ("DM送ってもいいですか？会いたいです", "reply_to_post"),
+            ("今日もお疲れさまです", "reply_to_reply"),
+            ("新作楽しみにしてます！最高です", "quote"),
         ]
         import random
         picks = random.sample(samples, k=min(len(samples), int(b.get("count", 4))))
-        added = self.app.x.add_mentions(picks, [str(2000 + i) for i in range(len(picks))])
+        added = self.app.x.add_mentions([p[0] for p in picks], [str(2000 + i) for i in range(len(picks))], [p[1] for p in picks])
         return _ok({"added": len(added)})
+
+    def mock_posts(self, q, b) -> Result:
+        if not self.app.mock:
+            return _err("モックモードでのみ使えます", 404)
+        p = self.app.x.add_post("（サンプル）今日の写真です📷", likes=int(b.get("likes", 120)), reposts=int(b.get("reposts", 5)), impressions=int(b.get("impressions", 3000)))
+        return _ok({"id": p["id"]})

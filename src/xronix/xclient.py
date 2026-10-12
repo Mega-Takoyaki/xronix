@@ -15,7 +15,10 @@ from .http import Http, NetworkError, Response, read_with_backoff
 
 API = "https://api.x.com"
 AUTHORIZE_URL = "https://x.com/i/oauth2/authorize"
-SCOPES = "tweet.read tweet.write users.read offline.access"
+SCOPES = "tweet.read tweet.write users.read like.write offline.access"
+
+
+TWEET_FIELDS = "created_at,author_id,conversation_id,referenced_tweets,in_reply_to_user_id,public_metrics"
 
 
 class XError(Exception):
@@ -106,7 +109,7 @@ class LiveX:
         for _ in range(max_pages):
             params = {
                 "max_results": max_results,
-                "tweet.fields": "created_at,author_id,conversation_id,referenced_tweets,public_metrics",
+                "tweet.fields": TWEET_FIELDS,
             }
             if since_id:
                 params["since_id"] = since_id
@@ -122,6 +125,37 @@ class LiveX:
             if not next_token:
                 break
         return {"tweets": tweets, "newest_id": newest, "reads": reads, "truncated": bool(next_token)}
+
+    def tweets(self, token: str, ids: list[str]) -> dict:
+        """投稿をIDで取得する（スレッドの文脈用）。読み取りなのでバックオフあり。"""
+        if not ids:
+            return {"tweets": [], "reads": 0}
+        data = self._get(token, "/2/tweets", {"ids": ",".join(ids), "tweet.fields": TWEET_FIELDS})
+        tw = data.get("data", [])
+        return {"tweets": tw, "reads": len(tw)}
+
+    def own_posts(self, token: str, user_id: str, start_time: str, max_results: int = 20) -> dict:
+        """自分の投稿（返信・リポストを除く）と、その反応の数。start_time以降。"""
+        data = self._get(token, f"/2/users/{user_id}/tweets", {
+            "max_results": max(5, min(100, max_results)), "start_time": start_time,
+            "exclude": "retweets,replies", "tweet.fields": "created_at,public_metrics",
+        })
+        tw = data.get("data", [])
+        return {"tweets": tw, "reads": len(tw)}
+
+    # --- 書き込み（再試行しない） ---
+    def like(self, token: str, user_id: str, tweet_id: str) -> None:
+        try:
+            r = self.http.request("POST", f"{API}/2/users/{user_id}/likes",
+                                  {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                                  json.dumps({"tweet_id": tweet_id}).encode())
+        except NetworkError as e:
+            raise XError(f"通信エラー: {e}") from e
+        if r.status in (200, 201):
+            return
+        if r.status == 403:
+            raise XError("いいねを付けられませんでした（HTTP 403）。権限 like.write が無い場合は、Xと再接続してください", 403)
+        raise XError(f"いいねに失敗しました（HTTP {r.status}）", r.status)
 
     # --- 投稿作成（再試行しない） ---
     def create_reply(self, token: str, text: str, in_reply_to: str) -> str:
@@ -147,22 +181,67 @@ class MockX:
     def __init__(self):
         self.queue: list[dict] = []
         self.sent: list[dict] = []
+        self.liked: list[str] = []
+        self.posts: list[dict] = []
+        self.tweets_db: dict[str, dict] = {}
+        self.fail_next_like = False
         self._seq = 1_900_000_000_000_000_000
         self.fail_next_create: str | None = None  # テスト用: "definite" | "unknown"
 
-    def add_mentions(self, texts: list[str], author_ids: list[str] | None = None) -> list[dict]:
+    ME = "9999"
+
+    def add_mentions(self, texts: list[str], author_ids: list[str] | None = None, shapes: list[str] | None = None) -> list[dict]:
+        """shapes: 各メンションの形。reply_to_post（自投稿への返信）/ reply_to_reply（自分の返信への返信）/ mention（返信ではない）/ quote（引用）。"""
         out = []
         for i, t in enumerate(texts):
             self._seq += 1
+            shape = (shapes or [])[i] if shapes else "reply_to_post"
+            tid = str(self._seq)
+            root = "1800000000000000000"
             tw = {
-                "id": str(self._seq), "text": t, "author_id": (author_ids or [])[i] if author_ids else str(1000 + i),
-                "created_at": "2026-10-12T00:00:00.000Z", "conversation_id": str(self._seq),
-                "referenced_tweets": [{"type": "replied_to", "id": "1800000000000000000"}],
+                "id": tid, "text": t, "author_id": (author_ids or [])[i] if author_ids else str(1000 + i),
+                "created_at": "2026-10-12T00:00:00.000Z", "conversation_id": root,
                 "public_metrics": {"like_count": 0, "reply_count": 0, "retweet_count": 0, "quote_count": 0},
             }
+            if shape == "reply_to_post":
+                tw["referenced_tweets"] = [{"type": "replied_to", "id": root}]
+                tw["in_reply_to_user_id"] = self.ME
+                self.tweets_db.setdefault(root, {"id": root, "text": "（自分の投稿）元の投稿の本文", "author_id": self.ME, "conversation_id": root})
+            elif shape == "reply_to_reply":
+                parent = "1800000000000000001"
+                tw["referenced_tweets"] = [{"type": "replied_to", "id": parent}]
+                tw["in_reply_to_user_id"] = self.ME
+                self.tweets_db.setdefault(parent, {"id": parent, "text": "（自分の返信）ありがとうございます！", "author_id": self.ME, "conversation_id": root,
+                                                  "referenced_tweets": [{"type": "replied_to", "id": root}]})
+                self.tweets_db.setdefault(root, {"id": root, "text": "（自分の投稿）元の投稿の本文", "author_id": self.ME, "conversation_id": root})
+            elif shape == "quote":
+                tw["referenced_tweets"] = [{"type": "quoted", "id": root}]
+            else:  # mention
+                tw["conversation_id"] = tid
             self.queue.append(tw)
+            self.tweets_db[tid] = tw
             out.append(tw)
         return out
+
+    def add_post(self, text: str, likes: int = 0, reposts: int = 0, replies: int = 0, quotes: int = 0, impressions: int = 0) -> dict:
+        self._seq += 1
+        p = {"id": str(self._seq), "text": text, "created_at": "2026-10-12T00:00:00.000Z",
+             "public_metrics": {"like_count": likes, "retweet_count": reposts, "reply_count": replies, "quote_count": quotes, "impression_count": impressions}}
+        self.posts.append(p)
+        return p
+
+    def tweets(self, token, ids):
+        found = [self.tweets_db[i] for i in ids if i in self.tweets_db]
+        return {"tweets": found, "reads": len(found)}
+
+    def own_posts(self, token, user_id, start_time, max_results=20):
+        return {"tweets": list(self.posts)[:max_results], "reads": min(len(self.posts), max_results)}
+
+    def like(self, token, user_id, tweet_id):
+        if self.fail_next_like:
+            self.fail_next_like = False
+            raise XError("モックの失敗", 403)
+        self.liked.append(tweet_id)
 
     def exchange_code(self, *a, **k): return {"access_token": "mock-access", "refresh_token": "mock-refresh", "expires_in": 7200}
     def refresh(self, *a, **k): return {"access_token": "mock-access-" + new_id(), "refresh_token": "mock-refresh-" + new_id(), "expires_in": 7200}
