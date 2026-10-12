@@ -1,0 +1,127 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  XroniX 検証環境の事前準備（1回だけ手動で作成）。
+  GitHub ActionsがOIDCで引き受けるデプロイ用ロールと、デプロイ成果物の置き場を作る。長期のアクセスキーは使わない。
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Default: Mega-Takoyaki/xronix
+    Description: 「組織またはユーザー名/リポジトリ名」
+  EnvironmentName:
+    Type: String
+    Default: staging
+    Description: GitHubのEnvironment名。このEnvironmentで実行されたジョブだけがロールを引き受けられる
+  StackPrefix:
+    Type: String
+    Default: xronix
+    Description: デプロイするスタック名の接頭辞。ロールの権限はこの名前のリソースに限る
+  CreateOidcProvider:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: このアカウントにGitHubのOIDCプロバイダーが既にある場合は false
+
+Conditions:
+  CreateProvider: !Equals [!Ref CreateOidcProvider, "true"]
+
+Resources:
+  OidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${StackPrefix}-artifacts-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      LifecycleConfiguration:
+        Rules:
+          - {Id: expire, Status: Enabled, ExpirationInDays: 30}
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${StackPrefix}-github-deploy-${EnvironmentName}
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateProvider
+                - !Ref OidcProvider
+                - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:environment:${EnvironmentName}
+      Policies:
+        - PolicyName: deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudFormation
+                Effect: Allow
+                Action: cloudformation:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${StackPrefix}-*/*
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
+              - Sid: CloudFormationRead
+                Effect: Allow
+                Action: [cloudformation:GetTemplateSummary, cloudformation:ValidateTemplate, cloudformation:ListStacks]
+                Resource: "*"
+              - Sid: Services
+                Effect: Allow
+                Action: [lambda:*, apigateway:*, dynamodb:*, logs:*, scheduler:*, events:*, cloudfront:*]
+                Resource: "*"
+              - Sid: Buckets
+                Effect: Allow
+                Action: s3:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::${StackPrefix}-*
+                  - !Sub arn:${AWS::Partition}:s3:::${StackPrefix}-*/*
+              - Sid: RolesOfThisApp
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${StackPrefix}-*
+              - Sid: PassRoleToServices
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${StackPrefix}-*
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: [lambda.amazonaws.com, scheduler.amazonaws.com]
+
+Outputs:
+  RoleArn:
+    Description: GitHubのEnvironment変数 AWS_ROLE_ARN に設定する
+    Value: !GetAtt DeployRole.Arn
+  ArtifactBucket:
+    Description: GitHubのEnvironment変数 ARTIFACT_BUCKET に設定する
+    Value: !Ref ArtifactBucket

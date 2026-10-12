@@ -3,10 +3,10 @@
 | 項目 | 内容 |
 | --- | --- |
 | リージョン | ap-northeast-1 |
-| 環境 | 単一環境（本番のみ）。開発はローカルテストとモックで行う |
+| 環境 | 検証環境（スタック `xronix-staging`）。mainへのpushで自動デプロイ（GitHub Actions＋OIDC）。開発はローカルのモックでも行える |
 | ネットワーク | VPCなし。LambdaからXへは直接インターネットへ出る |
 | 配信 | CloudFront標準ドメイン＋S3。独自ドメインは不要（必要になったら追加） |
-| API | API Gateway HTTP API。JWTオーソライザー（Cognito） |
+| API | API Gateway HTTP API。認証はLambda内のBasic認証（ADR-0010）。画面はCloudFront FunctionでBasic認証 |
 | データ | DynamoDB オンデマンド |
 | 秘密情報 | SSM Parameter Store SecureString |
 | 初回のX認可 | 画面の「Xと接続」から行う。コールバックはAPIの `/api/x/callback`（ADR-0009） |

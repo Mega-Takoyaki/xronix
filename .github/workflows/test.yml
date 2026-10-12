@@ -1,7 +1,9 @@
 name: test
 
+# main以外のブランチとプルリクエストでテストする（mainはdeploy-stagingの中でテストする）
 on:
   push:
+    branches-ignore: [main]
   pull_request:
 
 jobs:

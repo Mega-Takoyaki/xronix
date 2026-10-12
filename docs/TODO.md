@@ -36,10 +36,10 @@
 
 - [ ] 実機のXで接続・取得を確認する（小さく試す。送信は1件ずつ）
 - [ ] Grokの接続を実機で確認する（モデル名と接続先は未確認の仮値）
-- [ ] SAMテンプレート（DynamoDB、Lambda×2、HTTP API、EventBridge、S3＋CloudFront、Cognito、SSM）
-- [ ] 承認画面のCognito認証（現状は認証なし。ローカル専用）
-- [ ] GitHub Actionsのデプロイ（OIDCでIAMロールを引き受ける。長期のアクセスキーは使わない）
-- [ ] デプロイ前に、実際の構成で費用を再見積もりし、運用者の確認を取る
+- [x] SAMテンプレート、Basic認証、GitHub Actionsの自動デプロイ（OIDC）を用意（未デプロイ）
+- [ ] 運用者: [手順書](guide/aws-staging-setup.md) に従い、費用の見込みを確認したうえで、bootstrap・GitHubのEnvironment設定を行う
+- [ ] 初回デプロイ後、動作確認（実AWSでの権限不足やCloudFront Functionの挙動は未検証）
+- [ ] 公開運用の前に、認証をCognito等へ置き換える（ADR-0004）
 - [ ] 返信APIの現行制限の確認（返信に @ユーザー名 が要るかどうか等）。要るなら、ユーザー名の取得方法と費用を検討
 
 ## MVP後

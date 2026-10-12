@@ -4,7 +4,7 @@ X（旧Twitter）アカウント @GirlAidol に付く返信・メンションを
 
 ## 現在の状態
 
-MVPをローカルで動かせる（モックモード）。AWSへのデプロイは未実施。
+MVPをローカルで動かせる（モックモード）。AWSの検証環境へ、mainへのpushで自動デプロイする仕組みを用意した（手順は [docs/guide/aws-staging-setup.md](docs/guide/aws-staging-setup.md)）。実際のデプロイは未実施。
 
 | 機能 | 状態 |
 | --- | --- |
@@ -14,7 +14,7 @@ MVPをローカルで動かせる（モックモード）。AWSへのデプロ�
 | ログ・統計（日別、分類別、概算費用） | ローカルで確認済み |
 | X接続（OAuth2＋PKCE）、AI接続（Grok）、Discord通知 | 単体テスト（偽のHTTP）のみ。実機は未確認 |
 | DynamoDB／SSMの実装、Lambda入口 | motoでテスト済み。実AWSは未確認 |
-| SAMテンプレート、GitHub Actionsのデプロイ | 未作成 |
+| SAMテンプレート（`template.yaml`）、事前準備（`infra/bootstrap.yaml`）、自動デプロイ（`.github/workflows/deploy.yml`） | lint・ビルド・Basic認証のロジックのテストまで。実AWSへのデプロイは未実施 |
 
 ## ローカルで動かす
 
@@ -37,7 +37,9 @@ python -m venv .venv
 ```
 src/xronix/   コア（api.py が全操作の入口。devserver.py と lambda_handlers.py が薄い入口）
 web/          日本語の管理画面（静的HTML／JS）
-tests/        pytest（61件）
+template.yaml  SAMテンプレート（検証環境）
+infra/        事前準備のテンプレート（OIDCとデプロイ用ロール）
+tests/        pytest（69件）
 docs/         arc42、ADR、TODO
 ```
 

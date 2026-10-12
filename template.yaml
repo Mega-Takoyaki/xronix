@@ -1,0 +1,212 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: XroniX - Xのメンション・返信管理（VPCなし、東京リージョン）
+
+Parameters:
+  BasicAuthHash:
+    Type: String
+    NoEcho: true
+    MinLength: 64
+    MaxLength: 64
+    AllowedPattern: "[0-9a-f]{64}"
+    Description: Basic認証の資格情報 "ユーザー名:パスワード" のSHA-256（16進）。デプロイのワークフローが生成する
+  SsmPrefix:
+    Type: String
+    Default: /xronix/
+    Description: 秘密情報を置くSSMパラメータの接頭辞
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Architectures: [arm64]
+    MemorySize: 256
+    CodeUri: src/
+    Environment:
+      Variables:
+        XRONIX_TABLE: !Ref Table
+        XRONIX_SSM_PREFIX: !Ref SsmPrefix
+        XRONIX_BASIC_HASH: !Ref BasicAuthHash
+
+Resources:
+  # ---------- データ ----------
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: pk, AttributeType: S}
+        - {AttributeName: sk, AttributeType: S}
+      KeySchema:
+        - {AttributeName: pk, KeyType: HASH}
+        - {AttributeName: sk, KeyType: RANGE}
+      TimeToLiveSpecification: {AttributeName: ttl, Enabled: true}
+
+  # ---------- API ----------
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      # 総当たりの抑制（Basic認証には試行回数の制限が無いため、受付の速さを絞る）
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 10
+        ThrottlingRateLimit: 5
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: xronix.lambda_handlers.api_handler
+      Timeout: 30
+      LoggingConfig: {LogGroup: !Ref ApiLogs}
+      Policies:
+        - DynamoDBCrudPolicy: {TableName: !Ref Table}
+        - Statement:
+            - Effect: Allow
+              Action: [ssm:GetParameter, ssm:PutParameter, ssm:DeleteParameter]
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}*
+      Events:
+        # 認証はLambda内（Basic認証）。直接のAPI URLにも効く。Xのコールバックだけはstateで保護し認証なし
+        Proxy:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: "/api/{proxy+}", Method: ANY}
+
+  ApiLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {RetentionInDays: 14}
+
+  # ---------- 定期処理（15分ごとに起動し、設定の間隔に達したときだけ実行） ----------
+  JobFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: xronix.lambda_handlers.job_handler
+      Timeout: 300
+      LoggingConfig: {LogGroup: !Ref JobLogs}
+      # 失敗時にLambdaが自動で再実行しない（二重処理を避ける）
+      EventInvokeConfig: {MaximumRetryAttempts: 0}
+      Policies:
+        - DynamoDBCrudPolicy: {TableName: !Ref Table}
+        - Statement:
+            - Effect: Allow
+              Action: [ssm:GetParameter, ssm:PutParameter, ssm:DeleteParameter]
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}*
+      Events:
+        Tick:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: rate(15 minutes)
+
+  JobLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {RetentionInDays: 14}
+
+  # ---------- 画面の配信（S3＋CloudFront。/api/* は同じドメインでAPIへ） ----------
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+
+  SiteOac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: {Service: cloudfront.amazonaws.com}
+            Action: s3:GetObject
+            Resource: !Sub ${SiteBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+
+  # 画面（静的ファイル）のBasic認証。/api/* はLambda側で認証する
+  BasicAuthFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub ${AWS::StackName}-basic-auth
+      AutoPublish: true
+      FunctionConfig:
+        Comment: XroniX Basic auth
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub |
+        const crypto = require('crypto');
+        const EXPECTED = '${BasicAuthHash}';
+        function handler(event) {
+          var req = event.request;
+          var h = req.headers.authorization;
+          if (h && h.value.indexOf('Basic ') === 0) {
+            try {
+              var decoded = Buffer.from(h.value.slice(6), 'base64').toString('utf8');
+              var got = crypto.createHash('sha256').update(decoded).digest('hex');
+              var diff = got.length ^ EXPECTED.length;
+              for (var i = 0; i < EXPECTED.length; i++) { diff |= got.charCodeAt(i) ^ EXPECTED.charCodeAt(i); }
+              if (diff === 0) { return req; }
+            } catch (e) {}
+          }
+          return {
+            statusCode: 401,
+            statusDescription: 'Unauthorized',
+            headers: { 'www-authenticate': { value: 'Basic realm="XroniX", charset="UTF-8"' }, 'cache-control': { value: 'no-store' } }
+          };
+        }
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2and3
+        PriceClass: PriceClass_200
+        DefaultRootObject: index.html
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOac.Id
+            S3OriginConfig: {OriginAccessIdentity: ""}
+          - Id: api
+            DomainName: !Sub ${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad            # CachingDisabled
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03  # SecurityHeadersPolicy
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt BasicAuthFunction.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad          # CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03
+
+Outputs:
+  SiteUrl:
+    Value: !Sub https://${Distribution.DomainName}
+  XCallbackUrl:
+    Description: Xの開発者コンソールに登録するコールバックURL
+    Value: !Sub https://${Distribution.DomainName}/api/x/callback
+  SiteBucketName:
+    Value: !Ref SiteBucket
+  ApiFunctionName:
+    Value: !Ref ApiFunction

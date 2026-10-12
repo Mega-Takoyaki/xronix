@@ -204,32 +204,75 @@ def test_notify_sends_counts_only(app):
 
 
 # --- Lambdaアダプタ（DynamoDB・SSMはmoto） ---
-def test_lambda_handlers_end_to_end(monkeypatch):
+import base64
+
+
+def basic(user="u", pw="p"):
+    return "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
+
+
+def lambda_env(monkeypatch):
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "x")
+    boto3.resource("dynamodb").create_table(
+        TableName="xt", BillingMode="PAY_PER_REQUEST",
+        AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}],
+        KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}])
+    monkeypatch.setenv("XRONIX_TABLE", "xt")
+    from xronix import lambda_handlers as lh
+    monkeypatch.setenv("XRONIX_BASIC_HASH", lh.basic_hash("u", "p"))
+    lh._api = None
+    return lh
+
+
+def ev(method, path, body=None, query=None, auth=None, csrf=True):
+    headers = {}
+    if auth:
+        headers["Authorization"] = auth
+    if csrf and method != "GET":
+        headers["X-Requested-With"] = "xronix"
+    return {"requestContext": {"http": {"method": method}}, "rawPath": path, "queryStringParameters": query,
+            "headers": headers, "body": json.dumps(body) if body else None}
+
+
+def test_lambda_basic_auth_rules(monkeypatch):
     with mock_aws():
-        monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-1")
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "x")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "x")
-        boto3.resource("dynamodb").create_table(
-            TableName="xt", BillingMode="PAY_PER_REQUEST",
-            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}],
-            KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}])
-        monkeypatch.setenv("XRONIX_TABLE", "xt")
-        from xronix import lambda_handlers as lh
+        lh = lambda_env(monkeypatch)
+        assert lh.api_handler(ev("GET", "/api/status"))["statusCode"] == 401
+        r = lh.api_handler(ev("GET", "/api/status"))
+        assert "Basic" in r["headers"]["WWW-Authenticate"]
+        assert lh.api_handler(ev("GET", "/api/status", auth=basic("u", "wrong")))["statusCode"] == 401
+        assert lh.api_handler(ev("GET", "/api/status", auth="Basic !!!notbase64"))["statusCode"] == 401
+        assert lh.api_handler(ev("GET", "/api/status", auth=basic()))["statusCode"] == 200
+        # 他サイトからの書き込みを想定: 認証済みでも専用ヘッダーが無ければ拒否
+        assert lh.api_handler(ev("POST", "/api/kill", {"on": True}, auth=basic(), csrf=False))["statusCode"] == 403
+        assert lh.api_handler(ev("POST", "/api/kill", {"on": True}, auth=basic()))["statusCode"] == 200
+        # Xのコールバックだけは認証なし（stateが無ければ画面へ戻すだけ）
+        r = lh.api_handler(ev("GET", "/api/x/callback", query={"state": "bogus"}))
+        assert r["statusCode"] == 302 and r["headers"]["Location"].endswith("x=invalid")
         lh._api = None
 
-        def ev(method, path, body=None, query=None):
-            return {"requestContext": {"http": {"method": method}}, "rawPath": path, "queryStringParameters": query,
-                    "body": json.dumps(body) if body else None}
 
-        r = lh.api_handler(ev("GET", "/api/status"))
+def test_lambda_fails_closed_without_hash(monkeypatch):
+    with mock_aws():
+        lh = lambda_env(monkeypatch)
+        monkeypatch.delenv("XRONIX_BASIC_HASH")
+        assert lh.api_handler(ev("GET", "/api/status", auth=basic()))["statusCode"] == 401   # 設定漏れは全拒否
+        lh._api = None
+
+
+def test_lambda_handlers_end_to_end(monkeypatch):
+    with mock_aws():
+        lh = lambda_env(monkeypatch)
+        a = basic()
+        r = lh.api_handler(ev("GET", "/api/status", auth=a))
         assert r["statusCode"] == 200 and json.loads(r["body"])["mode"] == "live"
-        r = lh.api_handler(ev("PUT", "/api/secrets/ai_api_key", {"value": "SSMVALUE"}))
-        assert r["statusCode"] == 200
+        assert lh.api_handler(ev("PUT", "/api/secrets/ai_api_key", {"value": "SSMVALUE"}, auth=a))["statusCode"] == 200
         assert boto3.client("ssm").get_parameter(Name="/xronix/ai_api_key", WithDecryption=True)["Parameter"]["Value"] == "SSMVALUE"
-        r = lh.api_handler(ev("PUT", "/api/settings/job", {"enabled": True, "interval_minutes": 30}))
+        r = lh.api_handler(ev("PUT", "/api/settings/job", {"enabled": True, "interval_minutes": 30}, auth=a))
         assert json.loads(r["body"])["interval_minutes"] == 30
-        r = lh.api_handler(ev("POST", "/api/templates", {"category": "fan", "text": "ありがとう"}))
-        assert r["statusCode"] == 201
+        assert lh.api_handler(ev("POST", "/api/templates", {"category": "fan", "text": "ありがとう"}, auth=a))["statusCode"] == 201
         assert lh.job_handler({}) == {"ran": True, "status": "error"}   # 未接続はerrorとして記録される
         assert lh.job_handler({})["ran"] is False                       # 直後は間隔未到達で実行しない
         lh._api = None
