@@ -1,0 +1,17 @@
+[project]
+name = "xronix"
+version = "0.1.0"
+description = "XroniX: Xのメンション・返信管理（半自動）"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+aws = ["boto3"]
+dev = ["pytest", "boto3", "moto[dynamodb,ssm]"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
