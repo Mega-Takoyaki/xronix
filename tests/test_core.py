@@ -46,8 +46,16 @@ def test_settings_validation(app):
         s.update("ai", {"provider": "grok"})
     with pytest.raises(ValidationError):
         s.update("ai", {"bedrock_region": "Tokyo"})
+    assert s.update("ai", {"bedrock_model": ""})["bedrock_model"] == ""        # 空は自動選択
     with pytest.raises(ValidationError):
-        s.update("ai", {"bedrock_model": ""})
+        s.update("ai", {"bedrock_model": "a b"})
+    assert s.update("job", {"metrics_interval_minutes": 5, "metrics_window_days": 30, "metrics_max_posts": 100})["metrics_window_days"] == 30
+    for bad in ({"metrics_interval_minutes": 4}, {"metrics_window_days": 31}, {"metrics_max_posts": 4}, {"metrics_max_posts": 101}):
+        with pytest.raises(ValidationError):
+            s.update("job", bad)
+    assert s.update("safety", {"like_daily_limit": 0, "auto_daily_limit": 0})["auto_daily_limit"] == 0
+    with pytest.raises(ValidationError):
+        s.update("safety", {"auto_daily_limit": 101})
     with pytest.raises(ValidationError):
         s.update("safety", {"daily_limit": 1000})
     with pytest.raises(ValidationError):
@@ -66,7 +74,7 @@ def test_ai_defaults_to_bedrock_and_old_values_fall_back():
     from xronix.settings import Settings
     st = Settings(SqliteRepo(":memory:"))
     ai = st.get("ai")
-    assert ai["provider"] == "bedrock" and ai["mode"] == "classify" and ai["bedrock_region"] == "ap-northeast-1"
+    assert ai["provider"] == "bedrock" and ai["bedrock_model"] == "" and ai["bedrock_region"] == "ap-northeast-1"
     st.repo.put("settings", "ai", {"provider": "grok"})    # 廃止した選択肢が保存されていても既定に戻る
     assert st.get("ai")["provider"] == "bedrock"
 

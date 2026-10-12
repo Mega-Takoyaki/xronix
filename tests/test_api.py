@@ -146,90 +146,85 @@ def test_mock_endpoint_blocked_in_live(clock):
 
 
 # --- AI・通知 ---
-def use_bedrock(app, bedrock, reply_json, mode="classify_draft"):
+def use_bedrock(app, bedrock, reply_json, model="test-model-id"):
     api = Api(app)
-    call(api, "PUT", "/api/settings/ai", {"provider": "bedrock", "mode": mode, "bedrock_model": "test-model-id"})
+    call(api, "PUT", "/api/settings/ai", {"provider": "bedrock", "bedrock_model": model})
     bedrock.push_text(reply_json)
     return api
 
 
 def use_openai(app, reply_json):
     api = Api(app)
-    call(api, "PUT", "/api/settings/ai", {"provider": "openai", "mode": "classify_draft", "openai_model": "test-gpt"})
+    call(api, "PUT", "/api/settings/ai", {"provider": "openai", "openai_model": "test-gpt"})
     call(api, "PUT", "/api/secrets/openai_api_key", {"value": "k"})
     app.http.push(200, {"choices": [{"message": {"content": reply_json}}]})
     return api
 
 
-def test_bedrock_needs_no_key(app, bedrock):
+def test_bedrock_needs_no_key_and_auto_picks_a_model(app, bedrock, control):
     Api(app).handle("PUT", "/api/settings/ai", {}, {"provider": "bedrock"})
     assert app.ai.provider() == "bedrock" and app.ai.active() is True
-    bedrock.push_text('前置き {"category": "question", "reply": "ご質問ありがとうございます"} 後ろ')
-    cat, reply, by = app.ai.classify("明日は配信ありますか")
-    assert (cat, reply, by) == ("question", "", "ai")                  # 既定は分類のみ。返信案は使わない
+    bedrock.push_text('前置き {"category": "question"} 後ろ')
+    assert app.ai.classify("明日は配信ありますか") == ("question", "ai")
     sent = bedrock.calls[-1]
-    assert sent["modelId"] == "anthropic.claude-haiku-5-5"
+    assert sent["modelId"] == "anthropic.claude-haiku-x"                 # 選択が空なので、一覧から安価なモデルを自動で選ぶ
     assert sent["messages"][0]["content"][0]["text"] == "明日は配信ありますか"
     assert app.http.calls == []                                         # Bedrockの呼び出しはHTTPではなくboto3
 
 
-def test_bedrock_classify_and_draft_with_fallbacks(app, bedrock):
-    use_bedrock(app, bedrock, '{"category": "question", "reply": "ご質問ありがとうございます"}')
-    assert app.ai.classify("明日は配信ありますか") == ("question", "ご質問ありがとうございます", "ai")
-    assert bedrock.calls[-1]["modelId"] == "test-model-id"
-    bedrock.push_text('{"category":"fan","reply":"見て https://a.example"}')
-    assert app.ai.classify("可愛い")[1] == ""                          # URL入りの返信案は捨てる
-    bedrock.push_text('{"category":"fan","reply":"' + "あ" * 200 + '"}')
-    assert app.ai.classify("可愛い")[1] == ""                          # 長すぎる案も捨てる
+def test_bedrock_classification_with_fallbacks(app, bedrock):
+    use_bedrock(app, bedrock, '{"category": "question"}')
+    assert app.ai.classify("明日は配信ありますか") == ("question", "ai")
+    assert bedrock.calls[-1]["modelId"] == "test-model-id"             # 選んだモデルを使う
     bedrock.push_error("ThrottlingException", "slow down")
-    assert app.ai.classify("可愛い")[2] == "rule"                      # 失敗時はルールに戻す
+    assert app.ai.classify("可愛い")[1] == "rule"                      # 失敗時はルールに戻る
     bedrock.push_text("not json")
-    assert app.ai.classify("可愛い")[2] == "rule"
+    assert app.ai.classify("可愛い")[1] == "rule"
     bedrock.push_text('{"category":"hacker"}')
     assert app.ai.classify("可愛い")[0] == "fan"                       # 不明な分類はルールの結果を使う
 
 
 def test_openai_option(app):
-    use_openai(app, '{"category": "question", "reply": "ご質問ありがとうございます"}')
-    assert app.ai.classify("明日は配信ありますか") == ("question", "ご質問ありがとうございます", "ai")
+    use_openai(app, '{"category": "question"}')
+    assert app.ai.classify("明日は配信ありますか") == ("question", "ai")
     call_ = app.http.calls[-1]
     assert call_["url"] == "https://api.openai.com/v1/chat/completions" and call_["headers"]["Authorization"] == "Bearer k"
     assert json.loads(call_["body"])["model"] == "test-gpt"
     app.http.push(500, {})
-    assert app.ai.classify("可愛い")[2] == "rule"
+    assert app.ai.classify("可愛い")[1] == "rule"
 
 
 def test_openai_without_key_does_nothing(app):
     api = Api(app)
     call(api, "PUT", "/api/settings/ai", {"provider": "openai"})
-    assert app.ai.active() is False and app.ai.classify("可愛い")[2] == "rule" and app.http.calls == []
+    assert app.ai.active() is False and app.ai.classify("可愛い")[1] == "rule" and app.http.calls == []
 
 
 def test_rule_provider_and_mock_mode_send_nothing(app, bedrock):
     api = Api(app)
     call(api, "PUT", "/api/settings/ai", {"provider": "rule"})
-    assert app.ai.classify("可愛い")[2] == "rule" and bedrock.calls == []
+    assert app.ai.classify("可愛い")[1] == "rule" and bedrock.calls == []
     call(api, "PUT", "/api/settings/ai", {"provider": "bedrock"})
     app.ai.allow_external = False                                       # モックモード（ローカルの動作確認）
-    assert app.ai.classify("可愛い")[2] == "rule" and bedrock.calls == []
+    assert app.ai.classify("可愛い")[1] == "rule" and bedrock.calls == []
 
 
 def test_ai_never_sees_spam_or_caution(app, bedrock):
     use_bedrock(app, bedrock, "{}")
-    assert app.ai.classify("副業で稼げます")[2] == "rule"
-    assert app.ai.classify("DM送って")[2] == "rule"
+    assert app.ai.classify("副業で稼げます")[1] == "rule"
+    assert app.ai.classify("DM送って")[1] == "rule"
     assert bedrock.calls == []                                          # 外部へ送っていない
 
 
 def test_ai_connection_test_endpoint(app, bedrock):
     api = Api(app)
-    call(api, "PUT", "/api/settings/ai", {"provider": "bedrock"})
+    call(api, "PUT", "/api/settings/ai", {"provider": "bedrock", "bedrock_model": "m1"})
     bedrock.push_error("AccessDeniedException", "model access not enabled")
     st, body = call(api, "POST", "/api/ai/test")
     assert st == 502 and "AccessDeniedException" in body["error"]       # 原因が画面に出る
     bedrock.push_text('{"category":"fan"}')
     st, body = call(api, "POST", "/api/ai/test")
-    assert st == 200 and body == {"provider": "bedrock", "category": "fan", "label": "ファンの感想"}
+    assert st == 200 and body == {"provider": "bedrock", "model": "m1", "category": "fan", "label": "ファンの感想"}
     call(api, "PUT", "/api/settings/ai", {"provider": "rule"})
     assert call(api, "POST", "/api/ai/test")[0] == 502
 

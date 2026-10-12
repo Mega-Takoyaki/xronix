@@ -38,6 +38,13 @@ class Notifier:
         self.log.warn("notify", f"Telegramへの通知に失敗しました（HTTP {r.status}）: {reason}")
         return False, f"Telegramがエラーを返しました（HTTP {r.status}）: {reason}"
 
+    def notify_text(self, text: str) -> bool:
+        """任意の文面を、通知が有効なときだけ送る。画面のURLが設定されていれば添える。"""
+        if not self.enabled():
+            return False
+        url = self.settings.get("notify")["site_url"]
+        return self.send(text + (f"\n{url}" if url else ""))[0]
+
     def notify_pending(self, count: int) -> bool:
         if not self.enabled():
             return False

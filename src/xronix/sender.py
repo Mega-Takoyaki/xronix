@@ -59,7 +59,7 @@ class Sender:
             self._fail(mention_id, e, definite=True)
             raise
         try:
-            tweet_id = self.x.create_reply(token, text, mention_id)
+            tweet_id = self.x.create_reply(token, text, m.get("target_tweet_id") or mention_id)
         except CreateError as e:
             self._fail(mention_id, e, definite=e.definite)
             raise

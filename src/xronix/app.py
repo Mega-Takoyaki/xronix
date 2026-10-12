@@ -4,11 +4,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from .actions import ActionEngine
 from .ai import AIService
 from .common import Logger, utcnow
 from .http import Http, UrllibHttp
 from .jobs import JobRunner
 from .notify import Notifier
+from .rules import Rules
 from .sender import Sender
 from .settings import Settings
 from .templates import Templates
@@ -30,6 +32,8 @@ class App:
     notifier: Notifier
     jobs: JobRunner
     sender: Sender
+    rules: Rules
+    engine: ActionEngine
     now: object = utcnow
 
     @property
@@ -38,19 +42,23 @@ class App:
 
 
 def build(repo, secrets, x, http: Http | None = None, now=utcnow, sleep=None, scheduler=None, rng=None,
-          allow_external_ai: bool = True, bedrock_factory=None) -> App:
+          allow_external_ai: bool = True, bedrock_factory=None, control_factory=None) -> App:
     http = http or UrllibHttp()
     settings = Settings(repo)
     logger = Logger(repo, now)
     templates = Templates(repo, now)
     templates.seed_if_empty()
+    rules = Rules(repo, now)
+    rules.seed_if_empty()
     kw = {"sleep": sleep} if sleep else {}
     tokens = TokenManager(repo, secrets, settings, x, logger, now, **kw)
-    ai = AIService(settings, secrets, http, logger, allow_external=allow_external_ai, bedrock_factory=bedrock_factory)
+    ai = AIService(settings, secrets, http, logger, allow_external=allow_external_ai, bedrock_factory=bedrock_factory,
+                   control_factory=control_factory, repo=repo, now=now)
     notifier = Notifier(settings, secrets, http, logger)
-    jobs = JobRunner(repo, settings, tokens, x, ai, templates, notifier, logger, now, scheduler=scheduler, rng=rng)
     sender = Sender(repo, settings, tokens, x, templates, logger, now)
-    return App(repo, secrets, settings, x, http, logger, templates, tokens, ai, notifier, jobs, sender, now)
+    engine = ActionEngine(repo, settings, x, tokens, ai, templates, notifier, sender, logger, now)
+    jobs = JobRunner(repo, settings, tokens, x, ai, templates, notifier, logger, now, scheduler=scheduler, rng=rng, rules=rules, engine=engine)
+    return App(repo, secrets, settings, x, http, logger, templates, tokens, ai, notifier, jobs, sender, rules, engine, now)
 
 
 def build_local(data_dir: str = ".xronix", mode: str | None = None) -> App:

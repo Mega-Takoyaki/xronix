@@ -4,24 +4,28 @@ from __future__ import annotations
 import random
 from datetime import timedelta
 
-from .classify import CAUTION, FAN, OTHER, QUESTION, SPAM
+from .classify import OTHER
+from .events import METRIC_EVENTS, classify_event
 from .common import Lease, iso, new_id, parse_iso, utcnow
 from .xclient import AuthRequired, XError
 
 COST_READ = 0.001
+COST_THREAD_READ = 0.005  # スレッドの文脈で読む他人の投稿（上限の見積もり）
 MIN_LEAD_SECONDS = 15        # 次回の実行は、登録時点から最低この秒数あとにする
 EARLY_TOLERANCE_SECONDS = 2  # 起動がわずかに早い場合の許容
 WATCHDOG_GRACE_SECONDS = 120 # 見守り（15分ごと）は、予定からこれ以上遅れているときだけ実行する
 
 
 class JobRunner:
-    def __init__(self, repo, settings, tokens, x, ai, templates, notifier, logger, now=utcnow, scheduler=None, rng=None):
+    def __init__(self, repo, settings, tokens, x, ai, templates, notifier, logger, now=utcnow, scheduler=None, rng=None,
+                 rules=None, engine=None):
         self.repo, self.settings, self.tokens, self.x = repo, settings, tokens, x
         self.ai, self.templates, self.notifier, self.log, self.now = ai, templates, notifier, logger, now
         self.lease = Lease(repo, "job", now)
         from .scheduler import NullScheduler
         self.scheduler = scheduler or NullScheduler()
         self.rng = rng or random.SystemRandom()
+        self.rules, self.engine = rules, engine
 
     # --- 状態 ---
     def state(self) -> dict:
@@ -84,8 +88,8 @@ class JobRunner:
     def run(self, trigger: str = "manual") -> dict:
         t0 = self.now()
         run = {"id": iso(t0) + "-" + new_id()[:4], "trigger": trigger, "started_at": iso(t0), "finished_at": "",
-               "status": "", "message": "", "fetched": 0, "new": 0, "reads": 0, "by_category": {}, "drafted": 0,
-               "ai_calls": 0, "est_cost_usd": 0.0}
+               "status": "", "message": "", "fetched": 0, "new": 0, "reads": 0, "thread_reads": 0, "by_category": {}, "drafted": 0,
+               "actions": 0, "ai_calls": 0, "est_cost_usd": 0.0}
         if self.settings.get("safety")["kill_switch"]:
             return self._finish(run, "skipped", "緊急停止中のため実行しませんでした", record=False)
         holder = new_id()
@@ -108,7 +112,7 @@ class JobRunner:
 
     def _finish(self, run: dict, status: str, message: str, record: bool = True) -> dict:
         run.update(status=status, message=message, finished_at=iso(self.now()))
-        run["est_cost_usd"] = round(run["reads"] * COST_READ, 4)
+        run["est_cost_usd"] = round(run["reads"] * COST_READ + run["thread_reads"] * COST_THREAD_READ, 4)
         if record:
             self.repo.put("runs", run["id"], run)
             self._save(last_status=status)
@@ -136,50 +140,81 @@ class JobRunner:
                 self.repo.put("state", "cursor", {"since_id": "0"})
             run["message"] = "初回のため現在地点から開始しました（過去分は取り込みません）"
             return
-        new_pending = 0
         for tw in reversed(res["tweets"]):  # 古い順
-            m = self._ingest(tw, run)
-            if m and m["state"] in ("pending", "review"):
-                new_pending += 1
+            self._ingest(tw, run, xcfg["user_id"])
         if res["newest_id"]:
             self.repo.put("state", "cursor", {"since_id": res["newest_id"]})
         if res.get("truncated"):
             run["message"] = "新着が多く、一部は次回に持ち越しました"
-        if new_pending:
-            run["notified"] = self.notifier.notify_pending(len(self.pending_ids()))
+        self._check_metrics(run, token, xcfg["user_id"])
+        pending = len(self.pending_ids())
+        if run["new"] and pending:
+            run["notified"] = self.notifier.notify_pending(pending)
+
+    def _check_metrics(self, run: dict, token: str, my_id: str) -> None:
+        """自投稿の数値（いいね数など）が基準以上になったものに、ルールを実行する。確認は設定の間隔ごと。"""
+        rules = self.rules.metric_rules() if self.rules else []
+        if not rules:
+            return
+        cfg, st, now = self.settings.get("job"), self.state(), self.now()
+        last = st.get("last_metrics_at", "")
+        if last and parse_iso(last) + timedelta(minutes=cfg["metrics_interval_minutes"]) > now:
+            return
+        start = (now - timedelta(days=cfg["metrics_window_days"])).strftime("%Y-%m-%dT%H:%M:%SZ")
+        res = self.x.own_posts(token, my_id, start, cfg["metrics_max_posts"])
+        run["reads"] += res["reads"]
+        for tw in res["tweets"]:
+            metrics = tw.get("public_metrics", {})
+            for rule in rules:
+                key, label = METRIC_EVENTS[rule["events"][0]]
+                value = int(metrics.get(key, 0))
+                if value < rule["threshold"]:
+                    continue
+                stamp = iso(now)
+                item = {"id": f"metric_{tw['id']}_{rule['id']}", "author_id": my_id, "text": tw.get("text", ""), "created_at": tw.get("created_at", ""),
+                        "conversation_id": tw["id"], "kind": rule["events"][0], "target_tweet_id": tw["id"], "parent_id": "",
+                        "metric": {"key": key, "label": label, "value": value, "threshold": rule["threshold"]},
+                        "category": OTHER, "state": "new", "draft_text": "", "draft_template_id": "", "final_text": "", "sent_tweet_id": "",
+                        "error": "", "classified_by": "", "actions": [], "rule_id": "", "rule_name": "", "fetched_at": stamp, "updated_at": stamp}
+                if self.repo.put_if_absent("mentions", item["id"], item):  # 各投稿で、基準を初めて超えたときに1回だけ
+                    run["new"] += 1
+                    self.engine.run(item, rule, run)
+        self._save(last_metrics_at=iso(now))
 
     def pending_ids(self) -> list[str]:
         return [m["id"] for m in self.repo.list("mentions") if m["state"] in ("pending", "review")]
 
-    def _ingest(self, tw: dict, run: dict) -> dict | None:
+    def _ingest(self, tw: dict, run: dict, my_id: str) -> dict | None:
+        if tw.get("author_id") == my_id:
+            return None  # 自分の投稿は扱わない
         now = iso(self.now())
+        kind = classify_event(tw, my_id)
+        refs = {r.get("type"): r.get("id") for r in tw.get("referenced_tweets", [])}
         item = {
             "id": tw["id"], "author_id": tw.get("author_id", ""), "text": tw.get("text", ""),
             "created_at": tw.get("created_at", ""), "conversation_id": tw.get("conversation_id", ""),
+            "kind": kind, "target_tweet_id": tw["id"], "parent_id": refs.get("replied_to") or refs.get("quoted") or "",
             "category": OTHER, "state": "new", "draft_text": "", "draft_template_id": "", "final_text": "",
-            "sent_tweet_id": "", "error": "", "classified_by": "", "fetched_at": now, "updated_at": now,
+            "sent_tweet_id": "", "error": "", "classified_by": "", "actions": [], "rule_id": "", "rule_name": "",
+            "fetched_at": now, "updated_at": now,
         }
         if not self.repo.put_if_absent("mentions", tw["id"], item):
             return None
         run["new"] += 1
-        blocked = self.repo.get("blocklist", item["author_id"]) is not None
-        if blocked:
-            cat, draft, by = self.ai_rule_only(item["text"]), "", "rule"
-        else:
-            cat, draft, by = self.ai.classify(item["text"])
-            if by == "ai":
-                run["ai_calls"] += 1
-        tpl_id = ""
-        if not blocked and cat in (FAN, QUESTION) and not draft:
-            t = self.templates.pick(cat)
-            if t:
-                draft, tpl_id = t["text"], t["id"]
-        state = "blocked" if blocked else "spam" if cat == SPAM else "review" if (cat in (CAUTION, OTHER) or not draft) else "pending"
-        item.update(category=cat, state=state, draft_text=draft, draft_template_id=tpl_id, classified_by=by, updated_at=now)
-        self.repo.put("mentions", item["id"], item)
-        if draft:
-            run["drafted"] += 1
+        if self.repo.get("blocklist", item["author_id"]) is not None:
+            item.update(category=self.ai_rule_only(item["text"]), state="blocked", classified_by="rule")
+            self.repo.put("mentions", item["id"], item)
+            return item
+        cat, by = self.ai.classify(item["text"])
+        if by == "ai":
+            run["ai_calls"] += 1
+        item.update(category=cat, classified_by=by)
         run["by_category"][cat] = run["by_category"].get(cat, 0) + 1
+        rule = self.rules.match(kind, cat) if self.rules else None
+        if rule:
+            return self.engine.run(item, rule, run)
+        item.update(state="review", actions=[{"type": "none", "label": "該当するルールなし", "ok": True, "detail": "該当するルールが無いため、人が確認します"}])
+        self.repo.put("mentions", item["id"], item)
         return item
 
     @staticmethod
