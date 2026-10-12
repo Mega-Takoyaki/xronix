@@ -1,2 +1,25 @@
-# xronix
-XroniX - Unofficial automation tool for X
+# XroniX（ズロニクス）
+
+X（旧Twitter）アカウント @GirlAidol に付く返信・メンションを、見逃さず、無理のない手間で返すための個人用アプリ。AWSサーバレスで動かす。
+
+## 現在のフェーズ
+
+検討フェーズ。実装は始めていない。決定事項と未決事項は ADR と TODO に記録する。
+
+## ドキュメント体系
+
+arc42 をベースにし、判断は ADR、作業は TODO に分けて記録する。
+
+| 場所 | 内容 |
+| --- | --- |
+| [docs/arc42/](docs/arc42/) | アーキテクチャ文書（arc42 の章立て） |
+| [docs/adr/](docs/adr/) | 設計判断の記録（状態: 提案中 / 採用 / 却下） |
+| [docs/TODO.md](docs/TODO.md) | 未決事項、確認事項、MVPまでの作業 |
+
+## 方針の要約
+
+- 半自動から始める。新着取得、分類、返信案、人が承認、送信の順。自動送信は MVP に含めない。
+- LambdaはVPCに入れない。
+- 成人向けの文脈を含むため、返信文の生成に Claude（Bedrock含む）を使わない。
+- ReelMilly とは別アプリ。コードもXトークンも共有しない。
+- 秘密情報は SSM / Secrets と `.env` のみに置き、コミットしない。
