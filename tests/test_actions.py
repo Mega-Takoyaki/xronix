@@ -157,12 +157,12 @@ def test_ai_prompt_and_single_context(app, bedrock):
     ai_on(app, bedrock, "ありがとう！")
     only_rule(app, categories=["fan"], actions=[{"type": "queue_reply", "source": "ai", "prompt": "とても丁寧に返す", "context": "single"}])
     app.x.add_mentions(["可愛い"], shapes=["reply_to_reply"])
-    app.jobs.run("manual")
+    run = app.jobs.run("manual")
     call_ = bedrock.calls[-1]
     assert call_["system"][0]["text"].startswith("とても丁寧に返す") and "140文字以内" in call_["system"][0]["text"]
     user = call_["messages"][0]["content"][0]["text"]
     assert "可愛い" in user and "スレッド" not in user                                   # 単体の文脈では、スレッドを取りに行かない
-    assert app.repo.list("runs", reverse=True)[0]["thread_reads"] == 0
+    assert run["thread_reads"] == 0
 
 
 def test_ai_thread_context_and_cost(app, bedrock):
@@ -170,11 +170,10 @@ def test_ai_thread_context_and_cost(app, bedrock):
     ai_on(app, bedrock, "ご質問ありがとうございます", cat="question")
     only_rule(app, categories=["question"], actions=[{"type": "queue_reply", "source": "ai", "prompt": "答える", "context": "thread", "thread_depth": 5}])
     app.x.add_mentions(["どこで買えますか？"], shapes=["reply_to_reply"])
-    app.jobs.run("manual")
+    run = app.jobs.run("manual")
     user = bedrock.calls[-1]["messages"][0]["content"][0]["text"]
     assert "スレッドの流れ（古い順）" in user
     assert user.index("あなた: （自分の投稿）") < user.index("あなた: （自分の返信）")           # 古い順（最初の投稿 → 自分の返信）
-    run = app.repo.list("runs", reverse=True)[0]
     assert run["thread_reads"] == 2 and run["est_cost_usd"] == pytest.approx(run["reads"] * 0.001 + 2 * 0.005)
 
 
