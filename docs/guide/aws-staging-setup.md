@@ -75,6 +75,7 @@ AWSの合計は月$0〜1程度。X APIの費用（月約$1〜2）は別である
 
 ## 注意
 
+- OIDCトークンの `sub` は、このリポジトリではIDを含む形式（`repo:Mega-Takoyaki@22055197/xronix@1415292133:environment:staging`）だった。`infra/bootstrap.yaml` のパラメータ `GitHubSubject` で指定する。通常の形式（`repo:組織/リポジトリ:environment:...`）を前提にすると、`Not authorized to perform sts:AssumeRoleWithWebIdentity` で失敗する。
 - Basic認証の資格情報のハッシュは、CloudFormationのパラメータ（値は伏せる）と、CloudFront FunctionのコードとLambdaの環境変数に入る。AWSコンソールに入れる人には見える。1人用の検証環境として許容している。
 - 認証の強度は、パスワードの長さに依存する。公開して長く運用する段階では、Cognitoなどへ置き換える（ADR-0004）。
 - デプロイ用ロールの権限は、スタック名の接頭辞 `xronix-` のIAMロールとS3バケットに絞っているが、Lambda・DynamoDB・CloudFront等はリソースを限定していない。実機では未検証であり、足りない権限があればデプロイ時に拒否される。
