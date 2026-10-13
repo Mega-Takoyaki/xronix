@@ -183,6 +183,7 @@ async function renderJobs() {
   const mInt = h("input", { type: "number", min: 5, max: 1440 }); mInt.value = s.metrics_interval_minutes;
   const mDays = h("input", { type: "number", min: 1, max: 30 }); mDays.value = s.metrics_window_days;
   const mMax = h("input", { type: "number", min: 5, max: 100 }); mMax.value = s.metrics_max_posts;
+  const wide = h("input", { type: "checkbox", checked: s.wide_fetch });
   const initial = h("select", {}, [["from_now", "現在地点から始める（過去分は取り込まない）"], ["backfill", "過去のメンションも取り込む"]].map(([v, t]) => h("option", { value: v, selected: v === s.initial_mode }, t)));
   const preview = h("div", { class: "muted" });
   const updatePreview = () => {
@@ -202,6 +203,7 @@ async function renderJobs() {
     h("div", { class: "row" },
       h("div", { class: "grow" }, lbl("1回の最大ページ数", "1ページは最大100件です。新着が多いときの上限で、残りは次回に取得します。"), pages),
       h("div", { class: "grow" }, lbl("初回の動作", "初回の実行だけに使います。現在地点から始めると、過去のメンションへの返信案は作られません。"), initial)),
+    h("label", { class: "inline", style: "margin-top:10px" }, wide, "取得範囲を広げる（自分の@が無い返信と、引用も取る）", tip("メンション一覧には、自分の@が無い返信や、引用が出ません。オンにすると、検索で自分宛ての返信を補い、引用が増えた自分の投稿だけ引用を取りに行きます。ルールで「自分の投稿への返信」「自分の返信への返信」「自分の投稿の引用」を使うときに必要です。他人の投稿の読み取りになり、約$0.005／件がかかります。")),
     h("h3", { style: "margin-top:14px" }, "自投稿の数値の確認", tip("「いいね数が基準以上」などのルールがあるときだけ、自分の投稿を読みに行きます。読み取りは1投稿あたり約$0.001です。例: 6時間ごとに20投稿なら、1日約$0.08です。")),
     h("div", { class: "row" },
       h("div", { class: "grow" }, lbl("確認の間隔（分）", "5〜1440分。定期処理の間隔とは別に、この間隔ごとに確認します。"), mInt),
@@ -209,7 +211,7 @@ async function renderJobs() {
       h("div", { class: "grow" }, lbl("見る投稿の最大数", "5〜100件。多いほど、読み取り料金が増えます。"), mMax)),
     h("div", { class: "row end", style: "margin-top:12px" },
       h("button", { onclick: async () => {
-        await act(() => api("PUT", "/api/settings/job", { enabled: enabled.checked, interval_minutes: Number(interval.value), jitter_minutes: Number(jitter.value), max_pages: Number(pages.value), initial_mode: initial.value,
+        await act(() => api("PUT", "/api/settings/job", { enabled: enabled.checked, interval_minutes: Number(interval.value), jitter_minutes: Number(jitter.value), max_pages: Number(pages.value), initial_mode: initial.value, wide_fetch: wide.checked,
           metrics_interval_minutes: Number(mInt.value), metrics_window_days: Number(mDays.value), metrics_max_posts: Number(mMax.value) }), "保存しました");
         await refreshStatus(); renderJobs();
       } }, "保存"),

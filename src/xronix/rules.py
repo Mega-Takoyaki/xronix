@@ -167,5 +167,9 @@ class Rules:
                 return r
         return None
 
+    def reaction_rules(self, *events: str) -> list[dict]:
+        """有効なルールのうち、指定した反応の種類を対象にするもの。"""
+        return [r for r in self.list() if r["enabled"] and any(e in r["events"] for e in events)]
+
     def metric_rules(self) -> list[dict]:
         return [r for r in self.list() if r["enabled"] and r["events"] and is_metric(r["events"][0])]

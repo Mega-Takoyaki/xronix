@@ -9,6 +9,7 @@ from .events import METRIC_EVENTS, classify_event
 from .common import Lease, iso, new_id, parse_iso, utcnow
 from .xclient import AuthRequired, XError
 
+MAX_CATCHUP_PAGES = 10  # 新着が多いときに、1回で追いつくページ数の上限（1ページ100件）
 COST_READ = 0.001
 COST_THREAD_READ = 0.005  # スレッドの文脈で読む他人の投稿（上限の見積もり）
 MIN_LEAD_SECONDS = 15        # 次回の実行は、登録時点から最低この秒数あとにする
@@ -129,7 +130,7 @@ class JobRunner:
         token = self.tokens.get_access_token()
         cursor = (self.repo.get("state", "cursor") or {}).get("since_id")
         first = cursor is None
-        res = self.x.mentions(token, xcfg["user_id"], cursor, max_pages=1 if first and cfg["initial_mode"] == "from_now" else cfg["max_pages"],
+        res = self.x.mentions(token, xcfg["user_id"], cursor, max_pages=1 if first and cfg["initial_mode"] == "from_now" else max(cfg["max_pages"], MAX_CATCHUP_PAGES),
                               max_results=5 if first and cfg["initial_mode"] == "from_now" else 100)
         run["fetched"], run["reads"] = len(res["tweets"]), res["reads"]
         if first and cfg["initial_mode"] == "from_now":
@@ -145,7 +146,9 @@ class JobRunner:
         if res["newest_id"]:
             self.repo.put("state", "cursor", {"since_id": res["newest_id"]})
         if res.get("truncated"):
-            run["message"] = "新着が多く、一部は次回に持ち越しました"
+            run["message"] = f"新着が非常に多く、古い分の一部は取り込めませんでした（1回の上限 {MAX_CATCHUP_PAGES * 100}件）"
+            self.log.warn("job", run["message"], run_id=run["id"])
+        self._wide_fetch(run, token, xcfg, fresh=first)
         self._check_metrics(run, token, xcfg["user_id"])
         pending = len(self.pending_ids())
         if run["new"] and pending:
@@ -154,9 +157,10 @@ class JobRunner:
     def _check_metrics(self, run: dict, token: str, my_id: str) -> None:
         """自投稿の数値（いいね数など）が基準以上になったものに、ルールを実行する。確認は設定の間隔ごと。"""
         rules = self.rules.metric_rules() if self.rules else []
-        if not rules:
-            return
         cfg, st, now = self.settings.get("job"), self.state(), self.now()
+        need_quotes = bool(cfg["wide_fetch"] and self.rules and self.rules.reaction_rules("quote"))
+        if not rules and not need_quotes:
+            return
         last = st.get("last_metrics_at", "")
         if last and parse_iso(last) + timedelta(minutes=cfg["metrics_interval_minutes"]) > now:
             return
@@ -179,7 +183,57 @@ class JobRunner:
                 if self.repo.put_if_absent("mentions", item["id"], item):  # 各投稿で、基準を初めて超えたときに1回だけ
                     run["new"] += 1
                     self.engine.run(item, rule, run)
+        if need_quotes:
+            self._fetch_quotes(run, token, my_id, res["tweets"])
         self._save(last_metrics_at=iso(now))
+
+    def _wide_fetch(self, run: dict, token: str, xcfg: dict, fresh: bool) -> None:
+        """メンション一覧に出ない返信（自分の@が無い返信）を、検索で補う。失敗しても、ジョブ全体は失敗にしない。"""
+        cfg = self.settings.get("job")
+        if not cfg["wide_fetch"] or not xcfg.get("username") or not self.rules:
+            return
+        if not self.rules.reaction_rules("reply_to_post", "reply_to_reply"):
+            return
+        try:
+            cur = (self.repo.get("state", "reply_cursor") or {}).get("since_id")
+            first = cur is None
+            skip = first and fresh and cfg["initial_mode"] == "from_now"  # 取得を始めたばかりなら、過去分は取り込まない
+            res = self.x.replies_to_me(token, xcfg["username"], cur, max_pages=1 if skip else MAX_CATCHUP_PAGES)
+            run["thread_reads"] += res["reads"]
+            if skip:
+                self.repo.put("state", "reply_cursor", {"since_id": res["newest_id"] or "0"})
+                return
+            for tw in reversed(res["tweets"]):
+                self._ingest(tw, run, xcfg["user_id"])
+            if res["newest_id"]:
+                self.repo.put("state", "reply_cursor", {"since_id": res["newest_id"]})
+            elif first:
+                self.repo.put("state", "reply_cursor", {"since_id": "0"})
+        except AuthRequired:
+            raise
+        except XError as e:
+            self.log.warn("job", f"返信の検索に失敗しました（メンションの取得は完了）: {e}", run_id=run["id"])
+
+    def _fetch_quotes(self, run: dict, token: str, my_id: str, posts: list[dict]) -> None:
+        """引用の数が増えた自分の投稿だけ、引用を取りに行く。"""
+        seen = self.repo.get("state", "quote_counts") or {}
+        counts = dict(seen)
+        try:
+            for p in posts:
+                n = int(p.get("public_metrics", {}).get("quote_count", 0))
+                if n <= int(seen.get(p["id"], 0)):
+                    continue
+                res = self.x.quotes_of(token, p["id"])
+                run["thread_reads"] += res["reads"]
+                for tw in reversed(res["tweets"]):
+                    self._ingest(tw, run, my_id)
+                counts[p["id"]] = n
+        except AuthRequired:
+            raise
+        except XError as e:
+            self.log.warn("job", f"引用の取得に失敗しました: {e}", run_id=run["id"])
+        finally:
+            self.repo.put("state", "quote_counts", counts)
 
     def pending_ids(self) -> list[str]:
         return [m["id"] for m in self.repo.list("mentions") if m["state"] in ("pending", "review")]

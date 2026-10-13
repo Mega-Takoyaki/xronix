@@ -11,7 +11,7 @@ DEFAULTS: dict[str, dict] = {
         "openai_model": "gpt-4o-mini", "openai_base_url": "https://api.openai.com/v1",
     },
     "job": {"enabled": False, "interval_minutes": 60, "jitter_minutes": 0, "initial_mode": "from_now", "max_pages": 3,
-            "metrics_interval_minutes": 360, "metrics_window_days": 7, "metrics_max_posts": 20},
+            "metrics_interval_minutes": 360, "metrics_window_days": 7, "metrics_max_posts": 20, "wide_fetch": True},
     "safety": {"kill_switch": False, "daily_limit": 10, "like_daily_limit": 20, "auto_daily_limit": 5},
     "notify": {"telegram_enabled": False, "telegram_chat_id": "", "site_url": ""},
 }
@@ -21,7 +21,7 @@ SCHEMA: dict[str, dict[str, type]] = {
     "x": {"client_id": str, "redirect_uri": str},
     "ai": {"provider": str, "bedrock_model": str, "bedrock_region": str, "openai_model": str, "openai_base_url": str},
     "job": {"enabled": bool, "interval_minutes": int, "jitter_minutes": int, "initial_mode": str, "max_pages": int,
-            "metrics_interval_minutes": int, "metrics_window_days": int, "metrics_max_posts": int},
+            "metrics_interval_minutes": int, "metrics_window_days": int, "metrics_max_posts": int, "wide_fetch": bool},
     "safety": {"kill_switch": bool, "daily_limit": int, "like_daily_limit": int, "auto_daily_limit": int},
     "notify": {"telegram_enabled": bool, "telegram_chat_id": str, "site_url": str},
 }
