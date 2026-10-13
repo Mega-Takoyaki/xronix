@@ -34,6 +34,10 @@ python -m venv .venv
 - データは `.xronix/`（SQLiteと秘密情報のファイル）に保存される。Gitには含まれない。
 - 実機のXに接続する場合は `XRONIX_X_MODE=live` で起動し、画面でClient IDとSecretを設定する（手順は [docs/TODO.md](docs/TODO.md)）。この場合、承認した返信は実際に投稿される。
 
+## マニュアル
+
+画面上部の本のアイコン（別タブ）から、[使い方ガイド](web/manual.html) を開ける。図はインラインSVG、画面の写真は `tools/make_manual_screenshots.py`（開発サーバー起動中に実行）で作り直せる。通知（トースト）は画面上部に、成功＝薄緑、お知らせ＝薄青、警告＝薄黄、エラー＝薄ピンクで出る。
+
 ## 構成
 
 ```

@@ -28,20 +28,25 @@ async function api(method, path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `エラー（HTTP ${res.status}）`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `エラー（HTTP ${res.status}）`), { status: res.status });
   return data;
 }
-let toastTimer;
-function toast(msg, isErr = false) {
-  const t = $("#toast");
-  t.textContent = msg;
-  t.className = "show" + (isErr ? " err" : "");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.className = ""), isErr ? 5000 : 2500);
+// トースト通知（画面の上部）。レベルで色を分ける: success=薄緑、info=薄青、warn=薄黄、error=薄ピンク
+const TOAST_ICON = { success: "✓", info: "ℹ", warn: "⚠", error: "✕" };
+function toast(msg, level = "success") {
+  if (level === true) level = "error";                      // 古い呼び方（true=エラー）との互換
+  if (!TOAST_ICON[level]) level = "success";
+  if (!msg) return;
+  const box = $("#toasts");
+  const el = h("div", { class: `toast ${level}`, role: level === "error" || level === "warn" ? "alert" : "status", title: "クリックで閉じる", onclick: () => el.remove() },
+    h("span", { class: "ic" }, TOAST_ICON[level]), h("span", {}, msg));
+  box.append(el);
+  while (box.children.length > 4) box.firstChild.remove();
+  setTimeout(() => el.remove(), { error: 7000, warn: 5500 }[level] || 3000);
 }
-async function act(fn, okMsg) {
-  try { const r = await fn(); if (okMsg) toast(okMsg); return r; }
-  catch (e) { toast(e.message, true); }
+async function act(fn, okMsg, okLevel = "success") {
+  try { const r = await fn(); if (okMsg) toast(okMsg, okLevel); return r; }
+  catch (e) { toast(e.message, e.status && e.status < 500 ? "warn" : "error"); }  // 入力や状態の問題（4xx）は警告、サーバー・外部サービスの失敗は、エラー
 }
 const fmtSec = (iso) => (iso ? new Date(iso).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—");
 const fmt = (iso) => (iso ? new Date(iso).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -69,7 +74,7 @@ async function refreshStatus() {
 }
 $("#kill").addEventListener("click", async () => {
   if (!status.kill_switch && !confirm("取得と送信をすべて止めます。よろしいですか？")) return;
-  await act(() => api("POST", "/api/kill", { on: !status.kill_switch }), status.kill_switch ? "解除しました" : "停止しました");
+  await act(() => api("POST", "/api/kill", { on: !status.kill_switch }), status.kill_switch ? "解除しました" : "停止しました", status.kill_switch ? "success" : "warn");
   await refreshStatus(); render();
 });
 
@@ -208,7 +213,7 @@ async function renderJobs() {
           metrics_interval_minutes: Number(mInt.value), metrics_window_days: Number(mDays.value), metrics_max_posts: Number(mMax.value) }), "保存しました");
         await refreshStatus(); renderJobs();
       } }, "保存"),
-      h("button", { class: "primary", onclick: async (e) => { e.target.disabled = true; const r = await act(() => api("POST", "/api/jobs/run"), null); if (r) toast(r.status === "ok" ? `完了しました（新規${r.new}件）` : r.message, r.status !== "ok"); await refreshStatus(); renderJobs(); } }, "今すぐ実行")),
+      h("button", { class: "primary", onclick: async (e) => { e.target.disabled = true; const r = await act(() => api("POST", "/api/jobs/run"), null); if (r) toast(r.status === "ok" ? `完了しました（新規${r.new}件）` : r.message, r.status === "ok" ? "success" : r.status === "skipped" ? "warn" : "error"); await refreshStatus(); renderJobs(); } }, "今すぐ実行")),
     h("div", { class: "muted" }, `次回の実行予定: ${s.enabled ? fmtSec(d.next_due) : "停止中"}`));
   const dev = status.mode === "mock" ? h("div", { class: "card" }, h("h3", {}, "動作確認（モック専用）", tip("モックの取得キューへ、サンプルのメンションを追加します。「今すぐ実行」で取り込まれます。")),
     h("div", { class: "row" },
@@ -247,14 +252,14 @@ async function renderStats() {
 function secretField(name, label, tipText, secrets, onChange) {
   const input = h("input", { type: "password", autocomplete: "off", placeholder: secrets[name] ? "設定済み（変更する場合のみ入力）" : "未設定" });
   return h("div", {}, lbl(label, tipText), h("div", { class: "row" }, h("div", { class: "grow" }, input),
-    h("button", { onclick: async () => { if (!input.value.trim()) return toast("値を入力してください", true); await act(() => api("PUT", `/api/secrets/${name}`, { value: input.value }), "保存しました"); onChange(); } }, "保存"),
+    h("button", { onclick: async () => { if (!input.value.trim()) return toast("値を入力してください", "warn"); await act(() => api("PUT", `/api/secrets/${name}`, { value: input.value }), "保存しました"); onChange(); } }, "保存"),
     secrets[name] ? h("button", { class: "danger", onclick: async () => { await act(() => api("DELETE", `/api/secrets/${name}`), "削除しました"); onChange(); } }, "削除") : null));
 }
 
 async function renderSettings() {
   const s = await api("GET", "/api/settings"), reload = async () => { await refreshStatus(); renderSettings(); };
   const params = new URLSearchParams(location.search);
-  if (params.get("x")) { toast({ ok: "Xと接続しました", denied: "Xでの認可が拒否されました", invalid: "認可の期限が切れました。もう一度お試しください", failed: "接続に失敗しました。ログを確認してください" }[params.get("x")] || "", params.get("x") !== "ok"); history.replaceState(null, "", "/"); }
+  if (params.get("x")) { toast({ ok: "Xと接続しました", denied: "Xでの認可が拒否されました", invalid: "認可の期限が切れました。もう一度お試しください", failed: "接続に失敗しました。ログを確認してください" }[params.get("x")] || "", { ok: "success", denied: "warn", invalid: "warn" }[params.get("x")] || "error"); history.replaceState(null, "", "/"); }
 
   // X接続
   const cid = h("input", { type: "text", value: s.x.client_id, autocomplete: "off" }); cid.value = s.x.client_id;
@@ -328,7 +333,7 @@ async function renderSettings() {
         h("div", { class: "row", style: "margin-top:6px" }, h("button", { onclick: async () => {
           const r = await act(() => api("POST", "/api/notify/detect-chat"));
           if (!r) return;
-          if (!r.chats.length) return toast("ボットにメッセージが届いていません。ボットに何か送ってから、もう一度押してください", true);
+          if (!r.chats.length) return toast("ボットにメッセージが届いていません。ボットに何か送ってから、もう一度押してください", "warn");
           const pick = (c) => { tgChat.value = c.id; chatList.replaceChildren(h("div", { class: "ok" }, `入力しました: ${c.name || c.username || c.id}（${c.id}）。「保存」を押してください。`)); };
           if (r.chats.length === 1) return pick(r.chats[0]);
           chatList.replaceChildren(h("div", { class: "muted" }, "複数見つかりました。通知を送るチャットを選んでください。"),
@@ -337,7 +342,7 @@ async function renderSettings() {
       h("div", { class: "grow" }, lbl("画面のURL（任意）", "入力すると、通知にこのURLを添えます。"), siteUrl)),
     h("div", { class: "row end", style: "margin-top:10px" },
       h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/notify", { telegram_enabled: tgOn.checked, telegram_chat_id: tgChat.value, site_url: siteUrl.value }), "保存しました"); } }, "保存"),
-      h("button", { onclick: async () => { const r = await act(() => api("POST", "/api/notify/test")); if (r) toast(r.sent ? "送信しました" : `送信に失敗しました: ${r.reason}`, !r.sent); } }, "テスト送信（保存後に押す）")));
+      h("button", { onclick: async () => { const r = await act(() => api("POST", "/api/notify/test")); if (r) toast(r.sent ? "送信しました" : `送信に失敗しました: ${r.reason}`, r.sent ? "success" : "error"); } }, "テスト送信（保存後に押す）")));
 
   // 安全装置
   const lim = h("input", { type: "number", min: 0, max: 100 }); lim.value = s.safety.daily_limit;
@@ -460,6 +465,7 @@ let tab = new URLSearchParams(location.search).get("tab") || localStorage.getIte
 async function render() {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   try { localStorage.setItem("xronix.tab", tab); } catch {}
+  $("#hint").replaceChildren(h("a", { href: `manual.html#${tab}`, target: "_blank", rel: "noopener" }, "この画面の使い方 ↗"));
   try {
     await ({ queue: () => renderQueue(true), history: () => renderQueue(false), rules: renderRules, templates: renderTemplates, jobs: renderJobs, stats: renderStats, settings: renderSettings }[tab] || (() => renderQueue(true)))();
   } catch (e) { view.replaceChildren(h("div", { class: "empty err" }, e.message)); }

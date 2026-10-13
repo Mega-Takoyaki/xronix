@@ -11,6 +11,9 @@
 <header>
   <div class="brand">XroniX <span id="mode" class="badge"></span></div>
   <div id="chips"></div>
+  <a id="manual-link" class="iconlink" href="manual.html" target="_blank" rel="noopener" title="使い方（マニュアル）を、別タブで開く" aria-label="使い方（マニュアル）を、別タブで開く">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 21.5V5.5"/><path d="M9.5 8.5h6M9.5 12h6"/></svg>
+  </a>
   <button id="kill" class="kill"></button>
 </header>
 <div id="banner" class="banner" hidden></div>
@@ -23,8 +26,11 @@
   <button data-tab="stats">統計・ログ</button>
   <button data-tab="settings">設定</button>
 </nav>
-<main id="view"></main>
-<div id="toast" role="status"></div>
+<main>
+  <div id="hint" class="manual-hint"></div>
+  <div id="view"></div>
+</main>
+<div id="toasts" aria-live="polite"></div>
 <script src="app.js"></script>
 </body>
 </html>
