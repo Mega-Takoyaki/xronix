@@ -334,7 +334,7 @@ class Api:
         out = {}
         if "category" in b or not partial:
             if b.get("category") not in ("fan", "question"):
-                raise ValidationError("カテゴリは「ファンの感想」「質問」から選んでください")
+                raise ValidationError("カテゴリは「ポジティブ反応」「質問」から選んでください")
             out["category"] = b["category"]
         if "text" in b or not partial:
             out["text"] = self.app.sender.check_text(str(b.get("text", "")))
