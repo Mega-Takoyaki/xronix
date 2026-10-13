@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>XroniX 使い方ガイド</title>
+<style>
+:root{--bg:#f7f8fa;--fg:#1f2430;--mute:#5d6577;--card:#fff;--line:#dde1e8;--accent:#2563eb;--ok:#e5f6ea;--info:#e6f0fb;--warn:#fff4d6;--err:#fde7ec}
+@media (prefers-color-scheme:dark){:root{--bg:#14171c;--fg:#e6e9ef;--mute:#9aa3b5;--card:#1d2128;--line:#303642;--accent:#7aa2ff;--ok:#1d3326;--info:#1b2a40;--warn:#3a321a;--err:#40212a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.8 system-ui,"Hiragino Sans","Noto Sans JP",sans-serif}
+a{color:var(--accent)}
+.wrap{display:flex;max-width:1180px;margin:0 auto;gap:28px;padding:0 16px}
+nav{position:sticky;top:0;align-self:flex-start;width:220px;flex:none;padding:20px 0;max-height:100vh;overflow:auto;font-size:14px}
+nav strong{display:block;margin-bottom:8px}
+nav a{display:block;padding:4px 8px;border-radius:6px;text-decoration:none;color:var(--fg)}
+nav a:hover{background:var(--line)}
+main{flex:1;min-width:0;padding:20px 0 80px}
+h1{font-size:28px;margin:8px 0}
+h2{font-size:22px;margin:48px 0 8px;padding-top:12px;border-top:2px solid var(--line);scroll-margin-top:12px}
+h3{font-size:17px;margin:28px 0 4px}
+.lead{color:var(--mute)}
+figure{margin:14px 0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px}
+figure img,figure svg{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:6px}
+figure.tall img{max-height:900px;width:auto;object-fit:contain}
+figcaption{font-size:13px;color:var(--mute);margin-top:6px;text-align:center}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:15px;margin:10px 0}
+th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
+th{background:var(--bg)}
+.note,.tip,.caution{border-radius:8px;padding:10px 14px;margin:12px 0;font-size:15px}
+.note{background:var(--info)}.tip{background:var(--ok)}.caution{background:var(--warn)}
+.danger{background:var(--err);border-radius:8px;padding:10px 14px;margin:12px 0}
+.badge{display:inline-block;width:22px;height:22px;border-radius:50%;background:#e0245e;color:#fff;text-align:center;font:700 13px/22px sans-serif}
+.toastdemo span{display:inline-block;padding:2px 10px;border-radius:6px;margin-right:6px}
+code{background:var(--line);padding:1px 6px;border-radius:4px;font-size:14px}
+svg text{font-family:system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;fill:#1f2430}
+@media (max-width:820px){.wrap{display:block}nav{position:static;width:auto;max-height:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <strong>目次</strong>
+  <a href="#intro">はじめに</a>
+  <a href="#screen">画面の見かた</a>
+  <a href="#setup">最初の設定</a>
+  <a href="#daily">毎日の使い方</a>
+  <a href="#queue">承認待ち</a>
+  <a href="#history">履歴</a>
+  <a href="#rules">ルール</a>
+  <a href="#templates">定型文</a>
+  <a href="#jobs">ジョブ（定期処理）</a>
+  <a href="#stats">統計・ログ</a>
+  <a href="#settings">設定</a>
+  <a href="#safety">安全装置</a>
+  <a href="#faq">困ったとき</a>
+  <a href="#glossary">用語集</a>
+  <a href="#cost">費用の目安</a>
+</nav>
+<main>
+<h1>XroniX 使い方ガイド</h1>
+<p class="lead">初めて使う人向けの説明です。このページは別タブで開いています。XroniXの画面と見比べながら読んでください。</p>
+
+<h2 id="intro">はじめに</h2>
+<p>XroniXは、Xのアカウント @GirlAidol に付いた返信やメンションを、見逃さずに、無理のない手間で返すための個人用アプリです。基本は半自動です。新着を集め、種類を分け、返信案を作り、人が確認してから送ります。</p>
+
+<figure>
+<svg viewBox="0 0 880 150" role="img" aria-label="全体の流れ">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5d6577"/></marker></defs>
+  <g stroke="#5d6577" stroke-width="1.5" fill="none" marker-end="url(#ar)">
+    <path d="M150 60H178"/><path d="M318 60H346"/><path d="M486 60H514"/><path d="M654 60H682"/>
+  </g>
+  <rect x="10" y="30" width="140" height="60" rx="10" fill="#e6f0fb" stroke="#9db8e0"/><text x="80" y="58" text-anchor="middle" font-size="15">1 取得</text><text x="80" y="78" text-anchor="middle" font-size="12">Xから新着を集める</text>
+  <rect x="180" y="30" width="140" height="60" rx="10" fill="#e5f6ea" stroke="#9ccfae"/><text x="250" y="58" text-anchor="middle" font-size="15">2 分類</text><text x="250" y="78" text-anchor="middle" font-size="12">種類を自動で分ける</text>
+  <rect x="348" y="30" width="140" height="60" rx="10" fill="#fff4d6" stroke="#e5cf8a"/><text x="418" y="58" text-anchor="middle" font-size="15">3 ルール</text><text x="418" y="78" text-anchor="middle" font-size="12">いいね・返信案など</text>
+  <rect x="516" y="30" width="140" height="60" rx="10" fill="#fde7ec" stroke="#e5a3b3"/><text x="586" y="58" text-anchor="middle" font-size="15">4 承認</text><text x="586" y="78" text-anchor="middle" font-size="12">あなたが確認する</text>
+  <rect x="684" y="30" width="140" height="60" rx="10" fill="#e6f0fb" stroke="#9db8e0"/><text x="754" y="58" text-anchor="middle" font-size="15">5 送信</text><text x="754" y="78" text-anchor="middle" font-size="12">Xへ返信を投稿</text>
+  <text x="440" y="130" text-anchor="middle" font-size="13">ルールで「承認なしで送る」を選んだ場合だけ、4を飛ばして送ります（回数に上限があります）</text>
+</svg>
+<figcaption>図1 全体の流れ</figcaption>
+</figure>
+
+<table>
+<tr><th>できること</th><th>説明</th></tr>
+<tr><td>新着の取得</td><td>決まった間隔で、返信・引用・メンションを集めます。</td></tr>
+<tr><td>返信案の作成</td><td>定型文、またはAI（Amazon Bedrock）が案を作ります。</td></tr>
+<tr><td>人の承認</td><td>案を直して送る、または却下します。</td></tr>
+<tr><td>自動処理</td><td>いいねや通知など、決めた範囲だけを自動で行います。</td></tr>
+<tr><td>安全装置</td><td>1日の上限、ブロック、緊急停止があります。</td></tr>
+</table>
+<div class="note">本アプリは成人向けの内容を扱いません。AIの返信文には、リンク・@・#を入れられません。</div>
+
+<h2 id="screen">画面の見かた</h2>
+<figure class="tall">
+  <img src="manual-img/queue.png" alt="承認待ち画面と番号付きの説明" loading="lazy">
+  <figcaption>図2 承認待ち画面（番号は下の表と対応）</figcaption>
+</figure>
+<table>
+<tr><th>番号</th><th>場所</th><th>説明</th></tr>
+<tr><td><span class="badge">1</span></td><td>本のアイコン</td><td>このマニュアルを、別タブで開きます。</td></tr>
+<tr><td><span class="badge">2</span></td><td>緊急停止</td><td>取得と送信をすべて止めます。もう一度押すと解除します。</td></tr>
+<tr><td><span class="badge">3</span></td><td>タブ</td><td>画面を切り替えます。数字は承認待ちの件数です。</td></tr>
+<tr><td><span class="badge">4</span></td><td>カード</td><td>1件の反応です。種類、本文、ルールの実行結果が出ます。</td></tr>
+<tr><td><span class="badge">5</span></td><td>返信案</td><td>文字数と、送れない理由が出ます。ここで直せます。</td></tr>
+</table>
+<p>上部のチップ（小さな丸い表示）には、Xの接続状態、本日の送信数、定期処理の次回時刻が出ます。各画面の右上にある「この画面の使い方 ↗」から、この文書の該当する場所を開けます。</p>
+
+<h3>通知（トースト）の色</h3>
+<p>操作の結果は、画面の上部に短く表示されます。クリックすると閉じます。</p>
+<figure>
+  <img src="manual-img/toasts.png" alt="上部に表示される4色のトースト" loading="lazy">
+  <figcaption>図3 トーストは4段階で色が違います</figcaption>
+</figure>
+<table>
+<tr><th>色</th><th>意味</th><th>表示時間</th></tr>
+<tr><td>薄緑</td><td>成功</td><td>約3秒</td></tr>
+<tr><td>薄青</td><td>お知らせ</td><td>約3秒</td></tr>
+<tr><td>薄黄</td><td>警告。入力や状態を確認してください</td><td>約5.5秒</td></tr>
+<tr><td>薄ピンク</td><td>エラー。通信や外部サービスの失敗です</td><td>約7秒</td></tr>
+</table>
+<p>ⓘにマウスを載せると、その項目の説明が出ます。長い説明は画面に置かず、ⓘに集めています。</p>
+<figure>
+  <img src="manual-img/tooltip.png" alt="ⓘの説明" loading="lazy">
+  <figcaption>図4 ⓘの説明の例</figcaption>
+</figure>
+
+<h2 id="setup">最初の設定</h2>
+<p>次の順に進めると、迷いません。小さく試すため、最初は送信の上限を小さくします。</p>
+<figure>
+<svg viewBox="0 0 880 130" role="img" aria-label="初期設定の順序">
+  <g stroke="#5d6577" stroke-width="1.5" fill="none" marker-end="url(#ar)"><path d="M178 55H198"/><path d="M356 55H376"/><path d="M534 55H554"/><path d="M712 55H732"/></g>
+  <rect x="10" y="20" width="168" height="70" rx="10" fill="#e6f0fb" stroke="#9db8e0"/><text x="94" y="48" text-anchor="middle" font-size="14">A Xと接続</text><text x="94" y="70" text-anchor="middle" font-size="12">設定タブ</text>
+  <rect x="198" y="20" width="158" height="70" rx="10" fill="#e5f6ea" stroke="#9ccfae"/><text x="277" y="48" text-anchor="middle" font-size="14">B AIを選ぶ</text><text x="277" y="70" text-anchor="middle" font-size="12">接続テスト</text>
+  <rect x="376" y="20" width="158" height="70" rx="10" fill="#fff4d6" stroke="#e5cf8a"/><text x="455" y="48" text-anchor="middle" font-size="14">C Telegram</text><text x="455" y="70" text-anchor="middle" font-size="12">任意</text>
+  <rect x="554" y="20" width="158" height="70" rx="10" fill="#fde7ec" stroke="#e5a3b3"/><text x="633" y="48" text-anchor="middle" font-size="14">D 上限を決める</text><text x="633" y="70" text-anchor="middle" font-size="12">まず少なく</text>
+  <rect x="732" y="20" width="138" height="70" rx="10" fill="#e6f0fb" stroke="#9db8e0"/><text x="801" y="48" text-anchor="middle" font-size="14">E 定期処理</text><text x="801" y="70" text-anchor="middle" font-size="12">ジョブタブ</text>
+</svg>
+<figcaption>図5 初期設定の順序</figcaption>
+</figure>
+<figure class="tall"><img src="manual-img/settings.png" alt="設定画面" loading="lazy"><figcaption>図6 設定画面（モックモード）</figcaption></figure>
+<table>
+<tr><th>手順</th><th>やること</th><th>確認方法</th></tr>
+<tr><td>A</td><td>設定でClient ID・コールバックURL・Client Secretを保存し、「Xと接続」を押す。</td><td>上部のチップに「X: @アカウント名」が出る。</td></tr>
+<tr><td>B</td><td>AIの種類（既定はBedrock）を選び、モデルを一覧から選ぶ。「接続テスト」を押す。</td><td>成功のトーストが出る。</td></tr>
+<tr><td>C</td><td>Telegramのボットのトークンを保存し、ボットに話しかけてから「チャットIDを検出」を押す。</td><td>「テスト通知」が届く。</td></tr>
+<tr><td>D</td><td>1日の送信上限、自動送信の上限、いいねの上限を決める。</td><td>チップの「本日の送信 0/上限」。</td></tr>
+<tr><td>E</td><td>ジョブで間隔を決め、有効にする。</td><td>チップに次回時刻が出る。</td></tr>
+</table>
+<div class="caution">秘密情報（トークン・キー・パスワード）は、保存後に画面へ表示されません。再入力するまで、変更されません。</div>
+<div class="tip">AIのモデルは、使える一覧から選びます。選んだモデルが使えない場合は、自動で別のモデルに切り替えず、エラーとして知らせます。</div>
+
+<h2 id="daily">毎日の使い方</h2>
+<ol>
+<li>通知（Telegram）か、承認待ちタブの数字で、新着を知る。</li>
+<li>承認待ちを開き、1件ずつ本文と返信案を読む。</li>
+<li>必要なら返信案を直し、「承認して送信」を押す。送らないなら「却下」を押す。</li>
+<li>迷惑な相手は「ブロック対象に追加」を押す。</li>
+<li>ときどき、統計・ログで、取得数と費用を確認する。</li>
+</ol>
+
+<h2 id="queue">承認待ち</h2>
+<p>人が確認する返信案の一覧です。上から新しい順に並びます。</p>
+<figure><img src="manual-img/queue-card.png" alt="承認待ちのカード" loading="lazy"><figcaption>図7 カードの例</figcaption></figure>
+<table>
+<tr><th>ボタン</th><th>動作</th></tr>
+<tr><td>承認して送信</td><td>返信案をXに投稿します。リンクがある、文字数が多い、上限に達した場合は押せません。</td></tr>
+<tr><td>別の定型文にする</td><td>定型文から別の案に替えます。</td></tr>
+<tr><td>ブロック対象に追加</td><td>その相手への返信を止めます。</td></tr>
+<tr><td>却下</td><td>送らずに終わります。履歴に残ります。</td></tr>
+</table>
+<h3>返信案の状態</h3>
+<figure>
+<svg viewBox="0 0 880 150" role="img" aria-label="状態の移り変わり">
+  <g stroke="#5d6577" stroke-width="1.5" fill="none" marker-end="url(#ar)">
+    <path d="M150 45H198"/><path d="M338 45H386"/><path d="M526 45H574"/><path d="M290 70L170 112"/><path d="M290 70L420 112" stroke-dasharray="4 3"/>
+  </g>
+  <rect x="10" y="20" width="140" height="50" rx="10" fill="#fff4d6" stroke="#e5cf8a"/><text x="80" y="50" text-anchor="middle" font-size="14">承認待ち</text>
+  <rect x="200" y="20" width="138" height="50" rx="10" fill="#e6f0fb" stroke="#9db8e0"/><text x="269" y="50" text-anchor="middle" font-size="14">承認</text>
+  <rect x="388" y="20" width="138" height="50" rx="10" fill="#e6f0fb" stroke="#9db8e0"/><text x="457" y="50" text-anchor="middle" font-size="14">送信中</text>
+  <rect x="576" y="20" width="138" height="50" rx="10" fill="#e5f6ea" stroke="#9ccfae"/><text x="645" y="50" text-anchor="middle" font-size="14">送信済み</text>
+  <rect x="80" y="100" width="130" height="40" rx="10" fill="#e5e7ec" stroke="#b5bac6"/><text x="145" y="125" text-anchor="middle" font-size="14">却下</text>
+  <rect x="380" y="100" width="170" height="40" rx="10" fill="#fde7ec" stroke="#e5a3b3"/><text x="465" y="125" text-anchor="middle" font-size="14">結果不明</text>
+  <text x="600" y="125" font-size="12">応答が無いときは、Xの画面で確認します</text>
+</svg>
+<figcaption>図8 返信案の状態</figcaption>
+</figure>
+<div class="danger"><strong>結果不明について。</strong>投稿の結果が分からないとき、二重投稿を避けるため、自動では再送しません。Xの画面で投稿の有無を確認してから、手動で解決してください。</div>
+
+<h2 id="history">履歴</h2>
+<p>処理済みの反応（送信済み、却下、記録のみ、など）を確認できます。ルールがどう動いたかも出ます。</p>
+<figure class="tall"><img src="manual-img/history.png" alt="履歴画面" loading="lazy"><figcaption>図9 履歴画面</figcaption></figure>
+
+<h2 id="rules">ルール</h2>
+<p>反応の種類ごとに、何をするかを決める画面です。たとえば「ファンの感想にはいいねを付ける」「いいねが100件を超えたらAIの追加コメント案を作る」などを設定できます。</p>
+<figure class="tall"><img src="manual-img/rules.png" alt="ルール画面" loading="lazy"><figcaption>図10 ルール画面</figcaption></figure>
+<h3>ルールの探し方</h3>
+<figure>
+<svg viewBox="0 0 880 170" role="img" aria-label="ルールの探し方">
+  <g stroke="#5d6577" stroke-width="1.5" fill="none" marker-end="url(#ar)"><path d="M150 50H198"/><path d="M338 50H386"/><path d="M526 50H574"/><path d="M456 80V118"/></g>
+  <rect x="10" y="25" width="140" height="50" rx="10" fill="#e6f0fb" stroke="#9db8e0"/><text x="80" y="55" text-anchor="middle" font-size="14">新しい反応</text>
+  <rect x="200" y="25" width="138" height="50" rx="10" fill="#e5f6ea" stroke="#9ccfae"/><text x="269" y="55" text-anchor="middle" font-size="14">種類を判定</text>
+  <rect x="388" y="25" width="138" height="50" rx="10" fill="#fff4d6" stroke="#e5cf8a"/><text x="457" y="48" text-anchor="middle" font-size="13">上から順に</text><text x="457" y="65" text-anchor="middle" font-size="13">合うルールを探す</text>
+  <rect x="576" y="25" width="170" height="50" rx="10" fill="#fde7ec" stroke="#e5a3b3"/><text x="661" y="55" text-anchor="middle" font-size="14">最初に合った1つを実行</text>
+  <rect x="356" y="120" width="200" height="38" rx="10" fill="#e5e7ec" stroke="#b5bac6"/><text x="456" y="144" text-anchor="middle" font-size="13">どれも合わなければ何もしない</text>
+</svg>
+<figcaption>図11 ルールは、上にあるものが優先されます。↑↓で順序を変えます</figcaption>
+</figure>
+<table>
+<tr><th>項目</th><th>説明</th></tr>
+<tr><td>対象</td><td>「反応」（返信・引用・メンション）か、「自投稿の数値」（いいね数など）。</td></tr>
+<tr><td>反応の種類</td><td>自分の投稿への返信、自分の返信への返信（スレッドの続き）、自分の投稿の引用、その他のメンション。</td></tr>
+<tr><td>分類</td><td>ファンの感想、質問、スパム、要注意、その他。選ばなければ、すべてが対象です。</td></tr>
+<tr><td>アクション</td><td>上から順に実行されます。複数を並べられます。</td></tr>
+</table>
+<h3>アクションの種類</h3>
+<table>
+<tr><th>アクション</th><th>内容</th><th>承認</th></tr>
+<tr><td>何もしない（記録のみ）</td><td>履歴に記録します。</td><td>不要</td></tr>
+<tr><td>通知する</td><td>Telegramに、件数だけを送ります。</td><td>不要</td></tr>
+<tr><td>いいねを付ける</td><td>Xの権限 <code>like.write</code> が必要です。</td><td>不要</td></tr>
+<tr><td>返信案を作り、承認待ちに入れる</td><td>定型文、AI、空欄から選べます。</td><td>あなたが承認</td></tr>
+<tr><td>返信を自動で送る</td><td>定型文かAIで作り、そのまま送ります。1日の自動送信の上限があります。</td><td>不要（慎重に）</td></tr>
+<tr><td>ブロック対象に追加</td><td>相手を、以後の返信対象から外します。</td><td>不要</td></tr>
+</table>
+<h3>AIで作る場合</h3>
+<ul>
+<li>プロンプト（AIへの指示）を書きます。</li>
+<li>文脈は「この投稿だけ」か「スレッド全体（1〜10件）」から選びます。</li>
+<li>リンク、@、#を含む出力や、長すぎる出力は、自動で破棄されます。</li>
+</ul>
+<h3>設定例</h3>
+<table>
+<tr><th>やりたいこと</th><th>設定</th></tr>
+<tr><td>感想には、まず定型文で返す</td><td>分類「ファンの感想」、アクション「返信案を作る（定型文）」</td></tr>
+<tr><td>感想にいいねだけ付ける</td><td>分類「ファンの感想」、アクション「いいねを付ける」</td></tr>
+<tr><td>スパムは放置する</td><td>分類「スパム」、アクション「何もしない」</td></tr>
+<tr><td>人気の投稿にお礼を出す</td><td>対象「自投稿の数値」、いいね数が基準以上、アクション「AIで返信案」</td></tr>
+</table>
+<div class="tip">「確認」欄で、反応の種類と分類を選んで「確認」を押すと、どのルールが動くかを事前に調べられます。</div>
+<div class="caution">自動送信は、最初は使わないでください。承認待ちで様子を見てから、少数で試します。</div>
+
+<h2 id="templates">定型文</h2>
+<p>返信案の元になる文章です。分類ごとに登録でき、繰り返しにならないよう順番に使われます。</p>
+<figure class="tall"><img src="manual-img/templates.png" alt="定型文画面" loading="lazy"><figcaption>図12 定型文画面</figcaption></figure>
+<ul>
+<li>リンク（URL）は入れられません。</li>
+<li>文字数は、日本語を2として数え、280までです。</li>
+</ul>
+
+<h2 id="jobs">ジョブ（定期処理）</h2>
+<p>新着を取りに行く間隔を決める画面です。</p>
+<figure class="tall"><img src="manual-img/jobs.png" alt="ジョブ画面" loading="lazy"><figcaption>図13 ジョブ画面</figcaption></figure>
+<table>
+<tr><th>項目</th><th>説明</th></tr>
+<tr><td>実行間隔</td><td>1〜999分。前回の開始から、この分数後に動きます。</td></tr>
+<tr><td>ランダムなずらし幅</td><td>1〜99分。前後にずらし、秒もランダムにします（毎回00秒にはなりません）。</td></tr>
+<tr><td>初回の動作</td><td>既定は「現在地点から始める」。過去分は取り込みません。</td></tr>
+<tr><td>今すぐ実行</td><td>待たずに1回動かします。</td></tr>
+<tr><td>自投稿の数値の確認</td><td>いいね数などを、決めた間隔で確認します。同じ投稿とルールの組は、1回だけ動きます。</td></tr>
+</table>
+<figure>
+<svg viewBox="0 0 880 120" role="img" aria-label="定期処理のタイミング">
+  <line x1="30" y1="60" x2="850" y2="60" stroke="#5d6577" stroke-width="2"/>
+  <g fill="#2563eb"><circle cx="100" cy="60" r="6"/><circle cx="380" cy="60" r="6"/><circle cx="660" cy="60" r="6"/></g>
+  <g fill="#e0245e" opacity=".85"><circle cx="130" cy="60" r="6"/><circle cx="350" cy="60" r="6"/><circle cx="700" cy="60" r="6"/></g>
+  <g stroke="#9ccfae" stroke-width="10" opacity=".6"><line x1="380" y1="30" x2="450" y2="30"/></g>
+  <text x="100" y="95" text-anchor="middle" font-size="12">基準</text><text x="380" y="95" text-anchor="middle" font-size="12">基準</text><text x="660" y="95" text-anchor="middle" font-size="12">基準</text>
+  <text x="130" y="30" text-anchor="middle" font-size="12">実際（ずれる）</text>
+  <text x="440" y="108" text-anchor="middle" font-size="12">青＝基準の時刻、赤＝ずらした実際の時刻</text>
+</svg>
+<figcaption>図14 間隔とずらしのイメージ</figcaption>
+</figure>
+<div class="note">初めて有効にしたときは、約15秒後に最初の実行があります。実行が遅れていると、15分ごとの見守りが補います。</div>
+
+<h2 id="stats">統計・ログ</h2>
+<p>日別の取得数、分類別の件数、概算費用を確認できます。費用は目安です。</p>
+<figure class="tall"><img src="manual-img/stats.png" alt="統計画面" loading="lazy"><figcaption>図15 統計・ログ画面</figcaption></figure>
+
+<h2 id="settings">設定</h2>
+<p>X、AI、Telegram、安全装置の設定です。図6を参照してください。</p>
+<table>
+<tr><th>項目</th><th>説明</th></tr>
+<tr><td>X</td><td>Client ID、コールバックURL、Client Secret。保存後に「Xと接続」を押します。いいねの権限が必要なときは、接続し直します。</td></tr>
+<tr><td>AI</td><td>Bedrock（既定）、OpenAI互換、または使わない。使えるモデルの一覧から選び、接続テストで確認します。</td></tr>
+<tr><td>Telegram</td><td>ボットのトークンと、チャットID。通知には件数だけが入ります。</td></tr>
+<tr><td>安全</td><td>1日の送信上限（既定10）、自動送信の上限（既定5）、いいねの上限（既定20）。</td></tr>
+</table>
+
+<h2 id="safety">安全装置</h2>
+<table>
+<tr><th>仕組み</th><th>内容</th></tr>
+<tr><td>1日の送信上限</td><td>超えると、送信を拒否します。</td></tr>
+<tr><td>自動送信の上限</td><td>超えた分は、承認待ちに回ります。</td></tr>
+<tr><td>いいねの上限</td><td>超えるといいねを止めます。失敗は数えません。</td></tr>
+<tr><td>ブロック対象</td><td>返信しない相手です。</td></tr>
+<tr><td>リンク禁止</td><td>返信文にURLがあると、送れません（費用が約13倍になるため）。</td></tr>
+<tr><td>緊急停止</td><td>画面右上のボタン1つで、取得と送信を止めます。</td></tr>
+<tr><td>再送しない</td><td>投稿作成は、失敗しても自動で再送しません。</td></tr>
+</table>
+
+<h2 id="faq">困ったとき</h2>
+<table>
+<tr><th>症状</th><th>確認すること</th></tr>
+<tr><td>新着が来ない</td><td>Xが接続されているか。定期処理が有効か。緊急停止が入っていないか。初回は、過去分を取り込みません。</td></tr>
+<tr><td>「Xの認可が切れています」と出る</td><td>設定で「Xと接続」を押し直します。</td></tr>
+<tr><td>承認して送信が押せない</td><td>返信文が空、280字超、リンクあり、1日の上限、または緊急停止です。</td></tr>
+<tr><td>AIの接続テストが失敗する</td><td>そのモデルが、使える一覧に入っているか。AWSでモデルの利用が許可されているかを確認します。</td></tr>
+<tr><td>Telegramに届かない</td><td>ボットに先に話しかけたか。チャットIDを検出し直します。</td></tr>
+<tr><td>「結果不明」が出た</td><td>Xの画面で、投稿されているかを確認してから、手動で解決します。</td></tr>
+<tr><td>画面が古い</td><td>ブラウザを再読み込みします。</td></tr>
+</table>
+
+<h2 id="glossary">用語集</h2>
+<table>
+<tr><th>用語</th><th>意味</th></tr>
+<tr><td>メンション</td><td>@GirlAidol を含む投稿です。</td></tr>
+<tr><td>引用</td><td>自分の投稿を引用した投稿です。</td></tr>
+<tr><td>スレッド</td><td>返信が連なった一連の会話です。</td></tr>
+<tr><td>分類</td><td>ファンの感想、質問、スパム、要注意、その他。</td></tr>
+<tr><td>ルール</td><td>反応の種類と分類に応じた、処理の決まりです。</td></tr>
+<tr><td>アクション</td><td>ルールが行う1つ1つの処理です。</td></tr>
+<tr><td>プロンプト</td><td>AIへの指示文です。</td></tr>
+<tr><td>Bedrock</td><td>AWSのAIサービスです。</td></tr>
+<tr><td>ジョブ</td><td>決まった間隔で動く定期処理です。</td></tr>
+<tr><td>モックモード</td><td>Xへ何も送らない、試用モードです。</td></tr>
+</table>
+
+<h2 id="cost">費用の目安</h2>
+<p>XのAPIは使った分だけ課金されます。下の単価は、設計時に公式の文書で確認した値です。変わる場合があるため、Xの開発者コンソールで月の上限額を設定してください。</p>
+<table>
+<tr><th>操作</th><th>単価</th></tr>
+<tr><td>自分の投稿・メンションの読み取り</td><td>$0.001／件</td></tr>
+<tr><td>他人の投稿の読み取り</td><td>$0.005／件</td></tr>
+<tr><td>投稿作成（返信など）</td><td>$0.015／回（返信の区分は実測で確認中）</td></tr>
+<tr><td>リンク付き投稿</td><td>$0.20／回（本アプリは禁止）</td></tr>
+</table>
+<p class="lead">AIの費用は、モデルにより異なります。統計・ログの概算費用で、傾向を確認できます。</p>
+</main>
+</div>
+</body>
+</html>
