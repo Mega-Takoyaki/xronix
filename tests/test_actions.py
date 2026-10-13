@@ -310,6 +310,7 @@ def test_metric_rule_is_checked_at_its_own_interval(app, clock):
 
 def test_metric_not_checked_without_enabled_metric_rules(app):
     connect_and_start(app)
+    app.settings.update("job", {"wide_fetch": False})  # 取得範囲の拡張（引用の確認）も切る
     called = []
     app.x.own_posts = lambda *a, **k: called.append(1)
     app.x.add_post("人気", likes=1000)

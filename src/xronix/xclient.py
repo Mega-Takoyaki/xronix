@@ -126,6 +126,33 @@ class LiveX:
                 break
         return {"tweets": tweets, "newest_id": newest, "reads": reads, "truncated": bool(next_token)}
 
+    def replies_to_me(self, token: str, username: str, since_id: str | None, max_pages: int = 3) -> dict:
+        """自分宛ての返信を、検索で取る（to:）。返信文に自分の@が無い返信も拾える。直近7日が対象。"""
+        tweets: list[dict] = []
+        newest, next_token, reads = None, None, 0
+        for _ in range(max_pages):
+            params = {"query": f"to:{username} -from:{username}", "max_results": 100, "tweet.fields": TWEET_FIELDS}
+            if since_id:
+                params["since_id"] = since_id
+            if next_token:
+                params["next_token"] = next_token
+            data = self._get(token, "/2/tweets/search/recent", params)
+            page = data.get("data", [])
+            tweets += page
+            reads += len(page)
+            meta = data.get("meta", {})
+            newest = newest or meta.get("newest_id")
+            next_token = meta.get("next_token")
+            if not next_token:
+                break
+        return {"tweets": tweets, "newest_id": newest, "reads": reads, "truncated": bool(next_token)}
+
+    def quotes_of(self, token: str, tweet_id: str, max_results: int = 100) -> dict:
+        """ある投稿の引用を取る。"""
+        data = self._get(token, f"/2/tweets/{tweet_id}/quote_tweets", {"max_results": max(10, min(100, max_results)), "tweet.fields": TWEET_FIELDS})
+        tw = data.get("data", [])
+        return {"tweets": tw, "reads": len(tw)}
+
     def tweets(self, token: str, ids: list[str]) -> dict:
         """投稿をIDで取得する（スレッドの文脈用）。読み取りなのでバックオフあり。"""
         if not ids:
@@ -184,6 +211,8 @@ class MockX:
         self.liked: list[str] = []
         self.posts: list[dict] = []
         self.tweets_db: dict[str, dict] = {}
+        self.replies_queue: list[dict] = []  # 自分の@を含まない返信（検索でだけ取れるもの）
+        self.quotes_db: dict[str, list[dict]] = {}  # 投稿ID → その引用
         self.fail_next_like = False
         self._seq = 1_900_000_000_000_000_000
         self.fail_next_create: str | None = None  # テスト用: "definite" | "unknown"
@@ -236,6 +265,16 @@ class MockX:
 
     def own_posts(self, token, user_id, start_time, max_results=20):
         return {"tweets": list(self.posts)[:max_results], "reads": min(len(self.posts), max_results)}
+
+    def replies_to_me(self, token, username, since_id, max_pages=3):
+        tw = sorted(self.replies_queue, key=lambda t: int(t["id"]), reverse=True)
+        if since_id:
+            tw = [t for t in tw if int(t["id"]) > int(since_id)]
+        return {"tweets": tw, "newest_id": tw[0]["id"] if tw else None, "reads": len(tw), "truncated": False}
+
+    def quotes_of(self, token, tweet_id, max_results=100):
+        tw = list(self.quotes_db.get(tweet_id, []))
+        return {"tweets": tw, "reads": len(tw)}
 
     def like(self, token, user_id, tweet_id):
         if self.fail_next_like:

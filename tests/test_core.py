@@ -153,3 +153,19 @@ def test_oauth_scope_and_pkce():
     with pytest.raises(AuthRequired):
         LiveX(http).refresh("cid", "sec", "old")
     assert http.calls[0]["headers"]["Authorization"].startswith("Basic ")
+
+
+def test_live_replies_to_me_and_quotes_requests():
+    import urllib.parse
+    from conftest import FakeHttp
+    http = FakeHttp()
+    x = LiveX(http, sleep=lambda s: None)
+    http.push(200, {"data": [{"id": "5"}], "meta": {"newest_id": "5", "next_token": "NT"}})
+    http.push(200, {"data": [{"id": "4"}], "meta": {"newest_id": "4"}})
+    r = x.replies_to_me("tok", "example_account", "3", max_pages=3)
+    assert [t["id"] for t in r["tweets"]] == ["5", "4"] and r["newest_id"] == "5" and r["truncated"] is False
+    q1 = urllib.parse.parse_qs(urllib.parse.urlparse(http.calls[0]["url"]).query)
+    assert "/2/tweets/search/recent" in http.calls[0]["url"] and q1["query"] == ["to:example_account -from:example_account"] and q1["since_id"] == ["3"]
+    assert urllib.parse.parse_qs(urllib.parse.urlparse(http.calls[1]["url"]).query)["next_token"] == ["NT"]
+    http.push(200, {"data": [{"id": "9"}]})
+    assert x.quotes_of("tok", "77")["reads"] == 1 and "/2/tweets/77/quote_tweets" in http.calls[-1]["url"]

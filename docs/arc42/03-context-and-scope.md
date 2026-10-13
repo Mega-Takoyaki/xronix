@@ -25,6 +25,7 @@ flowchart LR
 | 相手 | 方向 | 内容 |
 | --- | --- | --- |
 | X API | 取得 | `GET /2/users/me`、`GET /2/users/:id/mentions`（since_id、max_results最大100） |
+| X API | 取得 | `GET /2/tweets/search/recent`（自分宛ての返信、`to:`）、`GET /2/tweets/:id/quote_tweets`（引用）。ADR-0016 |
 | X API | 取得 | `GET /2/users/:id/tweets`（自投稿の数値）、`GET /2/tweets`（スレッドの文脈） |
 | X API | 送信 | `POST /2/tweets`（`reply.in_reply_to_tweet_id`）、`POST /2/users/:id/likes`（いいね。権限 `like.write`） |
 | X API | 認可 | `https://x.com/i/oauth2/authorize`、`https://api.x.com/2/oauth2/token` |

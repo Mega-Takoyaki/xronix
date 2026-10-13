@@ -242,3 +242,73 @@ def test_resolve_unknown(app):
     assert app.repo.get("mentions", a)["state"] == "sent" and app.repo.get("mentions", b)["state"] == "failed"
     assert app.sender.sent_today() == 1
     assert api.handle("POST", f"/api/mentions/{a}/resolve", {}, {"outcome": "sent"})[0] == 409
+
+
+def test_wide_fetch_picks_up_replies_without_my_mention(app):
+    start(app)
+    # 自分の@が無い返信は、メンション一覧には出ず、検索（to:）でだけ取れる
+    app.x.replies_queue.append({"id": "2100000000000000001", "author_id": "700", "text": "いい投稿ですね",
+                                "conversation_id": "1", "in_reply_to_user_id": "9999", "referenced_tweets": [{"type": "replied_to", "id": "1"}]})
+    r = run(app)
+    assert r["new"] == 1 and r["thread_reads"] == 1
+    m = mentions(app)[0]
+    assert m["kind"] == "reply_to_post" and m["id"] == "2100000000000000001"
+    assert run(app)["new"] == 0  # 二重に取り込まない
+
+
+def test_wide_fetch_dedups_with_mentions_and_can_be_turned_off(app):
+    start(app)
+    app.settings.update("job", {"wide_fetch": False})
+    app.x.replies_queue.append({"id": "2100000000000000002", "author_id": "701", "text": "返信", "conversation_id": "1",
+                                "in_reply_to_user_id": "9999", "referenced_tweets": [{"type": "replied_to", "id": "1"}]})
+    assert run(app)["new"] == 0 and mentions(app) == []
+
+
+def test_wide_fetch_first_run_after_deploy_backfills_replies(app):
+    start(app)  # メンションの取得位置は、すでにある
+    app.repo.delete("state", "reply_cursor")
+    app.x.replies_queue.append({"id": "2100000000000000003", "author_id": "702", "text": "以前の返信", "conversation_id": "1",
+                                "in_reply_to_user_id": "9999", "referenced_tweets": [{"type": "replied_to", "id": "1"}]})
+    assert run(app)["new"] == 1
+
+
+def test_quotes_fetched_only_when_count_grows(app, clock):
+    start(app)
+    p = app.x.add_post("自分の投稿", quotes=1)
+    app.x.quotes_db[p["id"]] = [{"id": "2200000000000000001", "author_id": "703", "text": "引用です", "conversation_id": "2200000000000000001",
+                                 "referenced_tweets": [{"type": "quoted", "id": p["id"]}]}]
+    calls = []
+    orig = app.x.quotes_of
+    app.x.quotes_of = lambda *a, **k: (calls.append(1), orig(*a, **k))[1]
+    r = run(app)
+    assert r["new"] == 1 and mentions(app)[0]["kind"] == "quote" and len(calls) == 1
+    clock.advance(minutes=400)  # 確認の間隔を過ぎても、数が増えていなければ読まない
+    run(app)
+    assert len(calls) == 1  # 引用の数が増えていない投稿は、読みに行かない
+
+
+def test_reset_cursor_also_resets_wide_state(app):
+    api = start(app)
+    app.repo.put("state", "quote_counts", {"1": 3})
+    api.handle("POST", "/api/jobs/reset-cursor", {}, {"mode": "from_now"})
+    assert app.repo.get("state", "reply_cursor") is None and app.repo.get("state", "quote_counts") is None
+
+
+def test_wide_fetch_failure_does_not_fail_the_run(app):
+    from xronix.xclient import XError
+    start(app)
+
+    def boom(*a, **k):
+        raise XError("検索は使えません", 403)
+    app.x.replies_to_me = boom
+    r = run(app)
+    assert r["status"] == "ok"
+    assert any("返信の検索に失敗" in l["message"] for l in app.repo.list("logs"))
+
+
+def test_truncated_mentions_message_is_honest(app):
+    start(app)
+    orig = app.x.mentions
+    app.x.mentions = lambda *a, **k: {**orig(*a, **k), "truncated": True}
+    r = run(app)
+    assert "取り込めませんでした" in r["message"] and "持ち越" not in r["message"]
