@@ -245,7 +245,7 @@ class MockX:
 
     def exchange_code(self, *a, **k): return {"access_token": "mock-access", "refresh_token": "mock-refresh", "expires_in": 7200}
     def refresh(self, *a, **k): return {"access_token": "mock-access-" + new_id(), "refresh_token": "mock-refresh-" + new_id(), "expires_in": 7200}
-    def me(self, token): return {"id": "9999", "username": "GirlAidol_mock", "name": "モック"}
+    def me(self, token): return {"id": "9999", "username": "example_mock", "name": "モック"}
 
     def mentions(self, token, user_id, since_id, max_pages=3, max_results=100):
         tw = sorted(self.queue, key=lambda t: int(t["id"]), reverse=True)

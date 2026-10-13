@@ -52,7 +52,7 @@ def main():
         pg.click("[data-tab=settings]")
         pg.wait_for_selector("text=X との接続")
         pg.click("text=Xと接続")
-        pg.wait_for_selector("text=接続中: @GirlAidol_mock")
+        pg.wait_for_selector("text=接続中: @example_mock")
         pg.wait_for_timeout(300)
         shot(pg, "settings", full=True)
         # ジョブ

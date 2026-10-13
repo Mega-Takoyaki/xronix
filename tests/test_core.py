@@ -8,8 +8,8 @@ from xronix.xclient import AuthRequired, CreateError, LiveX, authorize_url, make
 
 
 @pytest.mark.parametrize("text,cat", [
-    ("@GirlAidol いつも可愛い投稿ありがとうございます！", FAN),
-    ("@GirlAidol この写真はどこですか？", QUESTION),
+    ("@example_account いつも可愛い投稿ありがとうございます！", FAN),
+    ("@example_account この写真はどこですか？", QUESTION),
     ("副業で稼げます", SPAM),
     ("見て https://example.com/a", SPAM),
     ("check my profile", SPAM),

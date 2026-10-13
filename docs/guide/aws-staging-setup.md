@@ -33,7 +33,7 @@ AWSの合計は月$0〜1程度。X APIの費用（月約$1〜2）は別である
 
 1. AWSコンソールで東京リージョン（ap-northeast-1）を選ぶ。
 2. CloudFormation → スタックの作成 → 新しいリソースを使用 → テンプレートファイルのアップロードで `infra/bootstrap.yaml` を選ぶ。
-3. スタック名は `xronix-bootstrap`。パラメータは既定のままでよい。
+3. スタック名は `xronix-bootstrap`。パラメータ `GitHubSubject`（OIDCトークンの sub のうち環境名より前の部分）は必須。形式は、下の「注意」を参照。他は既定のままでよい。
    - このアカウントに GitHub の OIDC プロバイダーが既にある場合だけ、`CreateOidcProvider` を `false` にする。
 4. 「IAMリソースを作成する場合があることを承認」にチェックして作成する。
 5. 出力タブの `RoleArn` と `ArtifactBucket` を控える。
@@ -114,7 +114,7 @@ AIは、メンションの分類に使います。返信文をAIで作るかど�
 
 ## 注意
 
-- OIDCトークンの `sub` は、このリポジトリではIDを含む形式（`repo:Mega-Takoyaki@22055197/xronix@1415292133:environment:staging`）だった。`infra/bootstrap.yaml` のパラメータ `GitHubSubject` で指定する。通常の形式（`repo:組織/リポジトリ:environment:...`）を前提にすると、`Not authorized to perform sts:AssumeRoleWithWebIdentity` で失敗する。
+- OIDCトークンの `sub` は、このリポジトリではIDを含む形式（`repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:staging`）だった。`infra/bootstrap.yaml` のパラメータ `GitHubSubject` で指定する。通常の形式（`repo:組織/リポジトリ:environment:...`）を前提にすると、`Not authorized to perform sts:AssumeRoleWithWebIdentity` で失敗する。
 - Basic認証の資格情報のハッシュは、CloudFormationのパラメータ（値は伏せる）と、CloudFront FunctionのコードとLambdaの環境変数に入る。AWSコンソールに入れる人には見える。1人用の検証環境として許容している。
 - 認証の強度は、パスワードの長さに依存する。公開して長く運用する段階では、Cognitoなどへ置き換える（ADR-0004）。
 - デプロイ用ロールの権限は、スタック名の接頭辞 `xronix-` のIAMロールとS3バケットに絞っているが、Lambda・DynamoDB・CloudFront等はリソースを限定していない。実機では未検証であり、足りない権限があればデプロイ時に拒否される。

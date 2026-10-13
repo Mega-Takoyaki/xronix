@@ -6,10 +6,9 @@ Description: >-
 Parameters:
   GitHubSubject:
     Type: String
-    Default: repo:Mega-Takoyaki@22055197/xronix@1415292133
     Description: >-
       OIDCトークンの sub のうち、環境名より前の部分。
-      このリポジトリのsubはIDを含む形式（リポジトリ名の変更や乗っ取りに強い）。実際の値はトークンの内容で確認した
+      このリポジトリのsubはIDを含む形式（リポジトリ名の変更や乗っ取りに強い）。実際の値はトークンの内容で確認して、必ず指定する（例: repo:OWNER/REPO、またはID入りの repo:OWNER@OWNER_ID/REPO@REPO_ID）
   EnvironmentName:
     Type: String
     Default: staging

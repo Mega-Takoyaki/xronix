@@ -129,10 +129,10 @@ def test_live_oauth_flow(clock):
     assert url.startswith("https://x.com/i/oauth2/authorize?") and "offline.access" in url.replace("%20", " ")
     state = [s for s in url.split("&") if s.startswith("state=")][0][6:]
     http.push(200, {"access_token": "AT", "refresh_token": "RT", "expires_in": 7200})
-    http.push(200, {"data": {"id": "42", "username": "GirlAidol"}})
+    http.push(200, {"data": {"id": "42", "username": "example_account"}})
     status, _, headers = api.handle("GET", "/api/x/callback", {"state": state, "code": "abc"}, {})
     assert status == 302 and headers["Location"].endswith("x=ok")
-    assert app.secrets.get("x_refresh_token") == "RT" and app.settings.get("x")["username"] == "GirlAidol"
+    assert app.secrets.get("x_refresh_token") == "RT" and app.settings.get("x")["username"] == "example_account"
     assert b"code_verifier=" in http.calls[0]["body"] and b"abc" in http.calls[0]["body"]
     # 使い終わったstateは再利用できない
     assert api.handle("GET", "/api/x/callback", {"state": state, "code": "abc"}, {})[2]["Location"].endswith("x=invalid")
