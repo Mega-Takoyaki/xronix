@@ -55,21 +55,60 @@ def _geo_prefix(region: str) -> str:
     return {"ap": "apac.", "us": "us.", "eu": "eu."}.get(region.split("-")[0], "")
 
 
-def pick_default(items: list[dict], region: str = "") -> str | None:
-    """使える一覧から、安価なモデルを1つ選ぶ。推論プロファイルは、リージョンに合うものを優先する。"""
-    if not items:
-        return None
+def ranked(items: list[dict], region: str = "") -> list[str]:
+    """使えるモデルのIDを、「安価な小型モデルを先に」の順に並べる。利用できないと分かっているものは除く。
+
+    同じ名前のものが複数あれば、利用可と確認できたもの、リージョンに合う推論プロファイル、の順に優先する。
+    """
     geo = _geo_prefix(region)
+    usable = [it for it in items if it.get("available") is not False]
 
-    def style(it: dict) -> int:
+    def style(it: dict) -> tuple:
         i = it["id"]
-        return 0 if geo and i.startswith(geo) else 1 if not i.split(".")[0] in ("us", "eu", "apac", "global", "jp", "au") else 2
+        geo_rank = 0 if geo and i.startswith(geo) else 1 if i.split(".")[0] not in ("us", "eu", "apac", "global", "jp", "au") else 2
+        return (it.get("available") is not True, geo_rank, i)
 
+    out: list[str] = []
     for words in DEFAULT_PREFERENCE:
-        hits = [it for it in items if all(w in (it["id"] + " " + it["label"]).lower() for w in words)]
-        if hits:
-            return sorted(hits, key=lambda it: (style(it), it["id"]))[0]["id"]
-    return sorted(items, key=lambda it: (style(it), it["id"]))[0]["id"]
+        for it in sorted((x for x in usable if all(w in (x["id"] + " " + x["label"]).lower() for w in words)), key=style):
+            if it["id"] not in out:
+                out.append(it["id"])
+    out += [it["id"] for it in sorted(usable, key=style) if it["id"] not in out]
+    return out
+
+
+def pick_default(items: list[dict], region: str = "") -> str | None:
+    r = ranked(items, region)
+    return r[0] if r else None
+
+
+def _availability(c, model_id: str) -> tuple[bool | None, str]:
+    """モデルが、このアカウント・リージョンで使えるか。(使える/使えない/不明, 理由)。"""
+    try:
+        r = c.get_foundation_model_availability(modelId=model_id)
+    except Exception:  # noqa: BLE001  権限が無い等。不明として扱う（一覧からは除かない）
+        return None, ""
+    if r.get("authorizationStatus") == "NOT_AUTHORIZED":
+        return False, "利用が許可されていません（モデルの利用有効化が必要）"
+    if r.get("entitlementAvailability") == "NOT_AVAILABLE":
+        return False, "このアカウントでは使えません（契約・提供の対象外）"
+    if r.get("regionAvailability") == "NOT_AVAILABLE":
+        return False, "このリージョンでは使えません"
+    agreement = (r.get("agreementAvailability") or {}).get("status")
+    if agreement in ("PENDING", "NOT_AVAILABLE", "ERROR"):
+        return False, {"PENDING": "利用規約への同意の処理中です", "NOT_AVAILABLE": "利用規約への同意が必要です", "ERROR": "利用規約の状態を確認できません"}[agreement]
+    return True, ""
+
+
+def _hint(code: str, message: str) -> str:
+    low = message.lower()
+    if "on-demand throughput" in low or "inference profile" in low:
+        return "このモデルは、推論プロファイルのIDで呼び出します。一覧の「推論プロファイル」から選んでください"
+    if code == "AccessDeniedException":
+        return "このアカウントでは、このモデルを使えません。一覧で「利用可」と表示されたモデルを選んでください"
+    if code == "ThrottlingException":
+        return "呼び出しが多すぎます。しばらく待ってください"
+    return ""
 
 
 class AIService:
@@ -80,6 +119,7 @@ class AIService:
         self._bedrock_factory = bedrock_factory or _default_bedrock_factory
         self._control_factory = control_factory or _default_control_factory
         self.repo, self.now = repo, now
+        self.last_model = ""  # 直近に呼び出したBedrockのモデルID（接続テストの表示用）
 
     def provider(self) -> str:
         return self.settings.get("ai")["provider"]
@@ -146,19 +186,37 @@ class AIService:
         raise AIError("AIが無効です")
 
     def _chat_bedrock(self, cfg: dict, system: str, user: str, max_tokens: int) -> str:
+        """モデルが選ばれていればそれを使う。「自動」なら、使える候補を順に試し、拒否されたものは1時間、候補から外す。"""
         from botocore.exceptions import BotoCoreError, ClientError
 
+        auto = not cfg["bedrock_model"]
         try:
-            model = self.resolve_model(cfg)
-            client = self._bedrock_factory(cfg["bedrock_region"])
-            resp = client.converse(modelId=model, system=[{"text": system}], messages=[{"role": "user", "content": [{"text": user}]}],
-                                   inferenceConfig={"maxTokens": max_tokens, "temperature": 0.3})
-            return "".join(b.get("text", "") for b in resp["output"]["message"]["content"])
-        except ClientError as e:
-            err = e.response.get("Error", {})
-            raise AIError(f"Bedrockがエラーを返しました（{err.get('Code', '不明')}）: {err.get('Message', '')}"[:300]) from e
-        except (BotoCoreError, KeyError, TypeError) as e:
-            raise AIError(f"Bedrockの呼び出しに失敗しました（{type(e).__name__}）") from e
+            models = self.candidates(cfg)[:3] if auto else [cfg["bedrock_model"]]
+        except AIError:
+            raise
+        if not models:
+            raise AIError("使えるモデルが見つかりません。AWSコンソールのBedrockで、モデルの利用を有効にしてください")
+        last: Exception | None = None
+        for model in models:
+            try:
+                client = self._bedrock_factory(cfg["bedrock_region"])
+                resp = client.converse(modelId=model, system=[{"text": system}], messages=[{"role": "user", "content": [{"text": user}]}],
+                                       inferenceConfig={"maxTokens": max_tokens, "temperature": 0.3})
+                self.last_model = model
+                return "".join(b.get("text", "") for b in resp["output"]["message"]["content"])
+            except ClientError as e:
+                err = e.response.get("Error", {})
+                code, msg = err.get("Code", "不明"), err.get("Message", "")
+                if auto and code in ("AccessDeniedException", "ValidationException", "ResourceNotFoundException"):
+                    self._block(model)  # 使えないモデル。次の候補を試す
+                    last = e
+                    continue
+                hint = _hint(code, msg)
+                raise AIError(f"Bedrockがエラーを返しました（{code}）: {msg}" + (f"　→ {hint}" if hint else "")) from e
+            except (BotoCoreError, KeyError, TypeError) as e:
+                raise AIError(f"Bedrockの呼び出しに失敗しました（{type(e).__name__}）") from e
+        err = last.response.get("Error", {}) if last else {}
+        raise AIError(f"使えるモデルが見つかりませんでした（試したモデルは、{', '.join(models)}）。最後のエラー: {err.get('Code', '不明')}: {err.get('Message', '')}"[:300])
 
     def _chat_openai(self, cfg: dict, system: str, user: str) -> str:
         key = self.secrets.get("openai_api_key")
@@ -178,24 +236,48 @@ class AIService:
             raise AIError("応答の形式が不正です") from e
 
     # --- Bedrockのモデル一覧 ---
+    def _blocked(self) -> dict:
+        rec = (self.repo.get("state", "bedrock_blocked") if self.repo else None) or {}
+        now = iso(self.now())
+        return {m: until for m, until in rec.get("items", {}).items() if until > now}
+
+    def _block(self, model: str) -> None:
+        if self.repo:
+            items = self._blocked()
+            items[model] = iso(self.now() + timedelta(seconds=MODELS_CACHE_SECONDS))
+            self.repo.put("state", "bedrock_blocked", {"items": items})
+            self.log.warn("ai", f"モデル {model} は使えなかったため、1時間、候補から外しました")
+
+    def candidates(self, cfg: dict) -> list[str]:
+        """「自動」のとき、試す順のモデルID。利用できないと分かっているもの、拒否されたものを除く。"""
+        blocked = self._blocked()
+        r = self.list_models()
+        return [m for m in ranked(r["items"], r["region"]) if m not in blocked]
+
     def list_models(self, refresh: bool = False) -> dict:
-        """いま使えるモデル（と推論プロファイル）の一覧。1時間キャッシュする。"""
+        """いま使えるモデル（と推論プロファイル）の一覧。各モデルが、このアカウントで使えるかも確認する。1時間キャッシュ。"""
         cfg = self.settings.get("ai")
         region = cfg["bedrock_region"]
         if not self.allow_external:
-            items = [{"id": "mock.small-model", "label": "（サンプル）小型モデル", "provider": "mock", "kind": "model"},
-                     {"id": "mock.large-model", "label": "（サンプル）大型モデル", "provider": "mock", "kind": "model"}]
+            items = [{"id": "mock.small-model", "label": "（サンプル）小型モデル", "provider": "mock", "kind": "model", "available": True, "reason": ""},
+                     {"id": "mock.large-model", "label": "（サンプル）大型モデル", "provider": "mock", "kind": "model", "available": True, "reason": ""},
+                     {"id": "mock.restricted-model", "label": "（サンプル）使えないモデル", "provider": "mock", "kind": "model", "available": False,
+                      "reason": "このアカウントでは使えません（契約・提供の対象外）"}]
             return {"items": items, "default": pick_default(items, region), "region": region, "cached": False, "sample": True}
         cache = self.repo.get("state", "bedrock_models") if self.repo else None
         if (not refresh and cache and cache.get("region") == region
                 and parse_iso(cache["fetched_at"]) > self.now() - timedelta(seconds=MODELS_CACHE_SECONDS)):
             return {"items": cache["items"], "default": pick_default(cache["items"], region), "region": region, "cached": True, "sample": False}
+        if refresh and self.repo:
+            self.repo.delete("state", "bedrock_blocked")  # 更新したときは、外した候補も戻す
         items = self._fetch_models(region)
         if self.repo:
             self.repo.put("state", "bedrock_models", {"region": region, "fetched_at": iso(self.now()), "items": items})
         return {"items": items, "default": pick_default(items, region), "region": region, "cached": False, "sample": False}
 
     def _fetch_models(self, region: str) -> list[dict]:
+        from concurrent.futures import ThreadPoolExecutor
+
         from botocore.exceptions import BotoCoreError, ClientError
 
         try:
@@ -207,7 +289,7 @@ class AIService:
                 if m.get("modelLifecycle", {}).get("status", "ACTIVE") != "ACTIVE" or "ON_DEMAND" not in m.get("inferenceTypesSupported", ["ON_DEMAND"]):
                     continue
                 items.append({"id": m["modelId"], "label": f"{m.get('providerName', '')} {m.get('modelName', m['modelId'])}".strip(),
-                              "provider": m.get("providerName", ""), "kind": "model"})
+                              "provider": m.get("providerName", ""), "kind": "model", "under": [m["modelId"]]})
             try:
                 profiles = c.list_inference_profiles(typeEquals="SYSTEM_DEFINED", maxResults=1000).get("inferenceProfileSummaries", [])
             except ClientError:
@@ -216,7 +298,17 @@ class AIService:
                 under = [x.get("modelArn", "").split("foundation-model/")[-1] for x in p.get("models", [])]
                 if p.get("status", "ACTIVE") == "ACTIVE" and under and all(u in text_ids for u in under):
                     items.append({"id": p["inferenceProfileId"], "label": p.get("inferenceProfileName", p["inferenceProfileId"]),
-                                  "provider": "", "kind": "profile"})
+                                  "provider": "", "kind": "profile", "under": under})
+            # 利用可否を、並行して確認する（モデルごとのAPIのため）。プロファイルは、元のモデルの状態に従う
+            need = sorted({u for it in items for u in it["under"]})
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                status = dict(zip(need, pool.map(lambda mid: _availability(c, mid), need)))
+            for it in items:
+                states = [status[u] for u in it["under"]]
+                bad = next((x for x in states if x[0] is False), None)
+                it["available"] = False if bad else (True if all(x[0] is True for x in states) else None)
+                it["reason"] = bad[1] if bad else ""
+                del it["under"]
             return sorted(items, key=lambda it: (it["kind"], it["label"].lower()))
         except ClientError as e:
             err = e.response.get("Error", {})
@@ -225,13 +317,13 @@ class AIService:
             raise AIError(f"モデル一覧の取得に失敗しました（{type(e).__name__}）") from e
 
     def resolve_model(self, cfg: dict) -> str:
-        """画面で選んだモデル。未選択（自動）なら、使える一覧から、安価なモデルを選ぶ。"""
+        """画面で選んだモデル。未選択（自動）なら、使える候補の先頭（安価なモデル）。"""
         if cfg["bedrock_model"]:
             return cfg["bedrock_model"]
-        picked = self.list_models()["default"]
-        if not picked:
+        cands = self.candidates(cfg)
+        if not cands:
             raise AIError("使えるモデルが見つかりません。AWSコンソールのBedrockで、モデルの利用を有効にしてください")
-        return picked
+        return cands[0]
 
     def test(self) -> dict:
         cfg = self.settings.get("ai")
@@ -241,5 +333,5 @@ class AIService:
             raise AIError("モックモードでは外部のAIを呼びません")
         out = self._json(self._chat(cfg, CLASSIFY_SYSTEM, SAMPLE, 100))
         cat = out.get("category", "")
-        model = self.resolve_model(cfg) if cfg["provider"] == "bedrock" else cfg["openai_model"]
+        model = self.last_model if cfg["provider"] == "bedrock" else cfg["openai_model"]
         return {"provider": cfg["provider"], "model": model, "category": cat, "label": LABELS.get(cat, "")}

@@ -72,6 +72,14 @@ class FakeControl:
              "models": [{"modelArn": "arn:aws:bedrock:ap-northeast-1::foundation-model/cohere.embed"}]},  # テキスト出力ではないので除外
         ]
         self.error = None
+        self.availability = {}        # モデルID -> 応答の上書き（既定は、すべて利用可）
+        self.availability_error = None
+    def get_foundation_model_availability(self, modelId):
+        if self.availability_error:
+            raise self.availability_error
+        ok = {"modelId": modelId, "agreementAvailability": {"status": "AVAILABLE"}, "authorizationStatus": "AUTHORIZED",
+              "entitlementAvailability": "AVAILABLE", "regionAvailability": "AVAILABLE"}
+        return {**ok, **self.availability.get(modelId, {})}
     def list_foundation_models(self, **kw):
         self.calls += 1
         if self.error:
