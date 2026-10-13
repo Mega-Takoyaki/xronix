@@ -70,6 +70,7 @@ class Api:
             ("DELETE", r"/api/blocklist/(?P<id>\w+)", self.del_block),
             ("GET", r"/api/jobs", self.jobs),
             ("POST", r"/api/jobs/run", self.run_job),
+            ("POST", r"/api/jobs/reset-cursor", self.reset_cursor),
             ("GET", r"/api/stats", self.stats),
             ("GET", r"/api/logs", self.logs),
             ("POST", r"/api/dev/mock-mentions", self.mock_mentions),
@@ -380,7 +381,19 @@ class Api:
     def jobs(self, q, b) -> Result:
         a = self.app
         return _ok({"settings": a.settings.get("job"), "state": a.jobs.state(), "next_due": a.jobs.next_due(),
+                    "cursor_set": bool(a.repo.get("state", "cursor")),
                     "runs": a.repo.list("runs", limit=30, reverse=True)})
+
+    def reset_cursor(self, q, b) -> Result:
+        """取得位置を消し、次の実行を「初回」として扱う。履歴・統計・取り込み済みの反応は消さない。"""
+        mode = b.get("mode")
+        if mode not in ("from_now", "backfill"):
+            raise ValidationError("方式は「現在地点から」「過去分も取り込む」から選んでください")
+        a = self.app
+        a.settings.update("job", {"initial_mode": mode})
+        a.repo.delete("state", "cursor")
+        a.logger.warn("job", "取得位置をリセットしました（" + ("現在地点から始める" if mode == "from_now" else "過去分も取り込む") + "）")
+        return _ok({"mode": mode})
 
     def run_job(self, q, b) -> Result:
         run = self.app.jobs.run("manual")
