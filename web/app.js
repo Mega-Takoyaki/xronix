@@ -215,6 +215,17 @@ async function renderJobs() {
       } }, "保存"),
       h("button", { class: "primary", onclick: async (e) => { e.target.disabled = true; const r = await act(() => api("POST", "/api/jobs/run"), null); if (r) toast(r.status === "ok" ? `完了しました（新規${r.new}件）` : r.message, r.status === "ok" ? "success" : r.status === "skipped" ? "warn" : "error"); await refreshStatus(); renderJobs(); } }, "今すぐ実行")),
     h("div", { class: "muted" }, `次回の実行予定: ${s.enabled ? fmtSec(d.next_due) : "停止中"}`));
+  const reset = h("div", { class: "card" }, h("h3", {}, "取得位置のリセット", tip("通常は不要です。取得位置（どこまで読んだか）を消し、次の実行を「初回」として扱います。履歴・統計・取り込み済みの反応は消えません。")),
+    h("div", { class: "muted" }, d.cursor_set ? "取得位置は、記録されています。" : "取得位置は、まだ記録されていません（次の実行が初回です）。"),
+    h("div", { class: "row", style: "margin-top:8px" },
+      h("button", { onclick: async () => {
+        if (!confirm("取得位置をリセットし、次の実行を「現在地点から始める」にします。過去分は取り込まれません。よろしいですか？")) return;
+        if (await act(() => api("POST", "/api/jobs/reset-cursor", { mode: "from_now" }), "リセットしました（次回は現在地点から）", "warn")) renderJobs();
+      } }, "現在地点からやり直す"),
+      h("button", { class: "danger", onclick: async () => {
+        if (!confirm("取得位置をリセットし、次の実行で過去のメンションも取り込みます。\n\n・取り込み件数が多くなり、Xの読み取り費用が増えます（約$0.001／件）\n・自動送信のルールが有効だと、まとめて送信される恐れがあります\n\n本当に実行しますか？")) return;
+        if (await act(() => api("POST", "/api/jobs/reset-cursor", { mode: "backfill" }), "リセットしました（次回は過去分も取り込みます）", "warn")) renderJobs();
+      } }, "過去分も取り込むようにやり直す")));
   const dev = status.mode === "mock" ? h("div", { class: "card" }, h("h3", {}, "動作確認（モック専用）", tip("モックの取得キューへ、サンプルのメンションを追加します。「今すぐ実行」で取り込まれます。")),
     h("div", { class: "row" },
       h("button", { onclick: async () => { await act(() => api("POST", "/api/dev/mock-mentions", { count: 4 }), "サンプルを4件追加しました"); } }, "サンプルのメンションを追加"),
@@ -222,7 +233,7 @@ async function renderJobs() {
   const runs = h("div", { class: "card" }, h("h3", {}, "実行履歴"), d.runs.length ? h("table", {}, h("tr", {}, ["開始", "起動", "結果", "取得", "新規", "返信案", "概算費用", "メッセージ"].map((c) => h("th", {}, c))),
     d.runs.map((r) => h("tr", {}, h("td", {}, fmtSec(r.started_at)), h("td", {}, TRIGGER[r.trigger] || r.trigger), h("td", { class: r.status === "ok" ? "ok" : "err" }, r.status === "ok" ? "成功" : "失敗"),
       h("td", {}, r.fetched), h("td", {}, r.new), h("td", {}, r.drafted), h("td", {}, `$${r.est_cost_usd}`), h("td", {}, r.message)))) : h("div", { class: "muted" }, "まだ実行されていません"));
-  view.replaceChildren(ctl, dev, runs);
+  view.replaceChildren(...[ctl, reset, dev, runs].filter(Boolean));
 }
 
 // ---------- 統計・ログ ----------

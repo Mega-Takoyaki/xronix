@@ -36,6 +36,22 @@ def test_first_run_starts_from_now_without_ingest(app):
     assert app.repo.get("state", "cursor")["since_id"]
 
 
+def test_reset_cursor_restarts_first_run(app):
+    api = start(app)
+    assert app.repo.get("state", "cursor")
+    assert api.handle("POST", "/api/jobs/reset-cursor", {}, {"mode": "bogus"})[0] == 400
+    add(app, "リセット前の反応")
+    run(app)
+    n = len(mentions(app))
+    assert api.handle("POST", "/api/jobs/reset-cursor", {}, {"mode": "backfill"})[0] == 200
+    assert app.repo.get("state", "cursor") is None and app.settings.get("job")["initial_mode"] == "backfill"
+    assert len(mentions(app)) == n  # 取り込み済みの反応は消えない
+    run(app)
+    assert app.repo.get("state", "cursor") and len(mentions(app)) == n  # 二重に取り込まない
+    api.handle("POST", "/api/jobs/reset-cursor", {}, {"mode": "from_now"})
+    assert app.settings.get("job")["initial_mode"] == "from_now" and app.repo.get("state", "cursor") is None
+
+
 def test_pipeline_classifies_and_drafts(app):
     start(app)
     add(app, "可愛い投稿ありがとうございます！", "どこで撮りましたか？", "副業で稼げます https://x.example", "DM送ってもいいですか？", "雨ですね")
