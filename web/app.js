@@ -282,16 +282,19 @@ async function renderSettings() {
       const r = await api("GET", "/api/ai/models" + (refresh ? "?refresh=1" : ""));
       const groups = [["モデル", "model"], ["推論プロファイル（リージョン横断）", "profile"]];
       bModel.replaceChildren(h("option", { value: "" }, `自動（安価なモデルを選ぶ）${r.default ? " → 現在: " + r.default : ""}`),
-        ...groups.map(([t, k]) => { const its = r.items.filter((i) => i.kind === k); return its.length ? h("optgroup", { label: t }, its.map((i) => h("option", { value: i.id }, `${i.label}（${i.id}）`))) : null; }).filter(Boolean));
+        ...groups.map(([t, k]) => { const its = r.items.filter((i) => i.kind === k); return its.length ? h("optgroup", { label: t }, its.map((i) => h("option", { value: i.id, disabled: i.available === false }, `${i.available === true ? "✓ 利用可　" : i.available === false ? "✗ 利用不可　" : ""}${i.label}（${i.id}）${i.available === false && i.reason ? " — " + i.reason : ""}`))) : null; }).filter(Boolean));
       if (r.selected && !r.items.some((i) => i.id === r.selected)) bModel.append(h("option", { value: r.selected }, `${r.selected}（一覧に無い）`));
       bModel.value = r.selected || "";
-      modelInfo.textContent = `${r.items.length}件${r.sample ? "（モックのサンプル）" : r.cached ? "（1時間以内に取得した一覧）" : ""}。モデルの利用有効化が済んでいるかは、「接続テスト」で確認できます。`;
+      const ok = r.items.filter((i) => i.available === true).length, ng = r.items.filter((i) => i.available === false).length;
+      const sel = r.items.find((i) => i.id === r.selected);
+      modelInfo.textContent = `${r.items.length}件（利用可 ${ok}件、利用不可 ${ng}件）${r.sample ? "（モックのサンプル）" : r.cached ? "（1時間以内に取得した一覧）" : ""}。` +
+        (sel && sel.available === false ? "選択中のモデルは、このアカウントでは使えません。別のモデルを選ぶか、「自動」に戻してください。" : "「利用不可」は、選べません。実際に使えるかは、「接続テスト」で確認できます。");
     } catch (e) { modelInfo.textContent = `一覧を取得できませんでした: ${e.message}（保存済みのモデルは、そのまま使えます）`; }
   }
   const oModel = h("input", { type: "text" }); oModel.value = s.ai.openai_model;
   const oBase = h("input", { type: "text" }); oBase.value = s.ai.openai_base_url;
   const bedrockBox = h("div", {}, h("div", { class: "row" },
-    h("div", { class: "grow" }, lbl("モデル", "いま使えるモデルの一覧から選びます。「自動」なら、名前から安価な小型モデルを選びます（GPT-6 Luna、nano、mini、Haiku、Nova Micro などの順）。選んだモデルは、分類にも、AIで作る返信文にも使います。"), bModel),
+    h("div", { class: "grow" }, lbl("モデル", "このアカウントで使えるかを確認した、モデルの一覧です。「自動」なら、使えるモデルの中から、名前で安価な小型モデルを選びます（GPT-6 Luna、nano、mini、Haiku、Nova Micro などの順）。実行時に拒否されたら、自動で次の候補に切り替えます。選んだモデルは、分類にも、AIで作る返信文にも使います。"), bModel),
     h("div", { style: "align-self:flex-end" }, h("button", { onclick: () => loadModels(true) }, "一覧を更新"))),
     bManual,
     h("div", { class: "row", style: "margin-top:6px" }, h("div", { class: "grow" }, lbl("リージョン", "Bedrockを呼び出すリージョンです。変えたら、保存してから「一覧を更新」を押してください。"), bRegion)),

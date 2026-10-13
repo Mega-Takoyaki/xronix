@@ -80,7 +80,7 @@ Resources:
                   iam:PassedToService: scheduler.amazonaws.com
             - Sid: BedrockListModels
               Effect: Allow
-              Action: [bedrock:ListFoundationModels, bedrock:ListInferenceProfiles]
+              Action: [bedrock:ListFoundationModels, bedrock:ListInferenceProfiles, bedrock:GetFoundationModelAvailability]
               Resource: "*"
             - Sid: BedrockInvoke
               Effect: Allow
@@ -130,7 +130,7 @@ Resources:
                   iam:PassedToService: scheduler.amazonaws.com
             - Sid: BedrockListModels
               Effect: Allow
-              Action: [bedrock:ListFoundationModels, bedrock:ListInferenceProfiles]
+              Action: [bedrock:ListFoundationModels, bedrock:ListInferenceProfiles, bedrock:GetFoundationModelAvailability]
               Resource: "*"
             - Sid: BedrockInvoke
               Effect: Allow
