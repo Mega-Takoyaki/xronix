@@ -15,7 +15,7 @@ from .http import Http, NetworkError
 
 CLASSIFY_SYSTEM = (
     "あなたはSNSアカウント運用者の補助です。受け取った返信を次のいずれかに分類し、JSONだけを出力してください。"
-    "分類: fan（ファンの感想）, question（質問）, spam（スパム・勧誘）, caution（攻撃的・個人情報・トラブルの恐れ）, other（その他）。"
+    "分類: fan（ポジティブ反応。好意的・応援・お礼などの感想）, question（質問）, spam（スパム・勧誘）, caution（攻撃的・個人情報・トラブルの恐れ）, other（その他）。"
     '形式: {"category": "..."}'
 )
 GENERATE_RULES = (

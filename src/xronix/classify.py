@@ -12,7 +12,7 @@ CAUTION = "caution"
 OTHER = "other"
 
 CATEGORIES = (FAN, QUESTION, SPAM, CAUTION, OTHER)
-LABELS = {FAN: "ファンの感想", QUESTION: "質問", SPAM: "スパム", CAUTION: "要注意", OTHER: "その他"}
+LABELS = {FAN: "ポジティブ反応", QUESTION: "質問", SPAM: "スパム", CAUTION: "要注意", OTHER: "その他"}
 
 _SPAM_WORDS = ("副業", "稼げ", "稼ぐ", "儲", "投資", "仮想通貨", "ビットコイン", "無料でプレゼント", "プレゼント企画",
                "フォロワー増", "相互フォロー", "拡散希望", "LINE追加", "公式LINE", "出会い", "パパ活", "ライブ配信", "副収入",

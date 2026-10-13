@@ -61,7 +61,7 @@ def test_queue_reply_reject_redraft_via_api(app):
     app.x.add_mentions(["可愛い！", "好き！"])
     app.jobs.run()
     items = call(api, "GET", "/api/mentions", query={"view": "queue"})[1]["items"]
-    assert len(items) == 2 and items[0]["label"] == "ファンの感想"
+    assert len(items) == 2 and items[0]["label"] == "ポジティブ反応"
     a, b = items[0]["id"], items[1]["id"]
     new = call(api, "POST", f"/api/mentions/{a}/redraft")[1]
     assert new["draft_text"] != items[0]["draft_text"]
@@ -224,7 +224,7 @@ def test_ai_connection_test_endpoint(app, bedrock):
     assert st == 502 and "AccessDeniedException" in body["error"]       # 原因が画面に出る
     bedrock.push_text('{"category":"fan"}')
     st, body = call(api, "POST", "/api/ai/test")
-    assert st == 200 and body == {"provider": "bedrock", "model": "m1", "category": "fan", "label": "ファンの感想"}
+    assert st == 200 and body == {"provider": "bedrock", "model": "m1", "category": "fan", "label": "ポジティブ反応"}
     call(api, "PUT", "/api/settings/ai", {"provider": "rule"})
     assert call(api, "POST", "/api/ai/test")[0] == 502
 

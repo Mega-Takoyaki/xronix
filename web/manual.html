@@ -191,7 +191,7 @@ svg text{font-family:system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;fill:#1
 <figure class="tall"><img src="manual-img/history.png" alt="履歴画面" loading="lazy"><figcaption>図9 履歴画面</figcaption></figure>
 
 <h2 id="rules">ルール</h2>
-<p>反応の種類ごとに、何をするかを決める画面です。たとえば「ファンの感想にはいいねを付ける」「いいねが100件を超えたらAIの追加コメント案を作る」などを設定できます。</p>
+<p>反応の種類ごとに、何をするかを決める画面です。たとえば「ポジティブ反応にはいいねを付ける」「いいねが100件を超えたらAIの追加コメント案を作る」などを設定できます。</p>
 <figure class="tall"><img src="manual-img/rules.png" alt="ルール画面" loading="lazy"><figcaption>図10 ルール画面</figcaption></figure>
 <h3>ルールの探し方</h3>
 <figure>
@@ -209,7 +209,7 @@ svg text{font-family:system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;fill:#1
 <tr><th>項目</th><th>説明</th></tr>
 <tr><td>対象</td><td>「反応」（返信・引用・メンション）か、「自投稿の数値」（いいね数など）。</td></tr>
 <tr><td>反応の種類</td><td>自分の投稿への返信、自分の返信への返信（スレッドの続き）、自分の投稿の引用、その他のメンション。</td></tr>
-<tr><td>分類</td><td>ファンの感想、質問、スパム、要注意、その他。選ばなければ、すべてが対象です。</td></tr>
+<tr><td>分類</td><td>ポジティブ反応、質問、スパム、要注意、その他。選ばなければ、すべてが対象です。</td></tr>
 <tr><td>アクション</td><td>上から順に実行されます。複数を並べられます。</td></tr>
 </table>
 <h3>アクションの種類</h3>
@@ -231,8 +231,8 @@ svg text{font-family:system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;fill:#1
 <h3>設定例</h3>
 <table>
 <tr><th>やりたいこと</th><th>設定</th></tr>
-<tr><td>感想には、まず定型文で返す</td><td>分類「ファンの感想」、アクション「返信案を作る（定型文）」</td></tr>
-<tr><td>感想にいいねだけ付ける</td><td>分類「ファンの感想」、アクション「いいねを付ける」</td></tr>
+<tr><td>ポジティブ反応には、まず定型文で返す</td><td>分類「ポジティブ反応」、アクション「返信案を作る（定型文）」</td></tr>
+<tr><td>ポジティブ反応にいいねだけ付ける</td><td>分類「ポジティブ反応」、アクション「いいねを付ける」</td></tr>
 <tr><td>スパムは放置する</td><td>分類「スパム」、アクション「何もしない」</td></tr>
 <tr><td>人気の投稿にお礼を出す</td><td>対象「自投稿の数値」、いいね数が基準以上、アクション「AIで返信案」</td></tr>
 </table>
@@ -316,7 +316,8 @@ svg text{font-family:system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;fill:#1
 <tr><td>メンション</td><td>@GirlAidol を含む投稿です。</td></tr>
 <tr><td>引用</td><td>自分の投稿を引用した投稿です。</td></tr>
 <tr><td>スレッド</td><td>返信が連なった一連の会話です。</td></tr>
-<tr><td>分類</td><td>ファンの感想、質問、スパム、要注意、その他。</td></tr>
+<tr><td>分類</td><td>ポジティブ反応、質問、スパム、要注意、その他。本文から自動で付くラベルで、相手がフォロワーかどうかは見ていません。</td></tr>
+<tr><td>ポジティブ反応</td><td>好意的・応援・お礼などの文面の反応です（例: 応援、癒し、尊い、可愛い、😍）。フォロワーかどうかとは無関係です。</td></tr>
 <tr><td>ルール</td><td>反応の種類と分類に応じた、処理の決まりです。</td></tr>
 <tr><td>アクション</td><td>ルールが行う1つ1つの処理です。</td></tr>
 <tr><td>プロンプト</td><td>AIへの指示文です。</td></tr>

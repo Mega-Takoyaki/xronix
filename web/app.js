@@ -365,7 +365,7 @@ async function renderSettings() {
 // ---------- ルール（反応ごとのアクション） ----------
 const SOURCE_LABEL = { template: "定型文から選ぶ", ai: "AIで作る（指示を書く）", manual: "空欄にする（自分で書く）" };
 const CONTEXT_LABEL = { single: "この投稿だけを渡す", thread: "スレッドの流れも渡す（遡った件数ぶん、読み取り料金がかかる）" };
-const TPL_LABEL = { auto: "分類に合わせる（ファン／質問）", fan: "ファンの感想", question: "質問" };
+const TPL_LABEL = { auto: "分類に合わせる（ポジティブ反応／質問）", fan: "ポジティブ反応", question: "質問" };
 const ACTION_TIP = {
   ignore: "何もせず、履歴に記録だけ残します。スパムなどに使います。",
   notify: "Telegramに、反応の種類だけを通知します（本文は送りません）。通知の設定が必要です。",
@@ -396,7 +396,7 @@ function ruleCard(rule, meta, reload) {
     if (a.type === "queue_reply" || a.type === "send_reply") {
       const sources = meta.sources[a.type];
       row.append(h("div", { class: "row" }, h("div", { class: "grow" }, lbl("返信文の作り方"), sel(sources.map((x) => [x, SOURCE_LABEL[x]]), a.source, (v) => { a.source = v; draw(); }))));
-      if (a.source === "template") row.append(lbl("使う定型文の分類", "「分類に合わせる」は、ファン→ファンの感想、質問→質問、それ以外→ファンの感想の定型文を使います。"), sel(Object.entries(TPL_LABEL), a.template_category, (v) => (a.template_category = v)));
+      if (a.source === "template") row.append(lbl("使う定型文の分類", "「分類に合わせる」は、ポジティブ反応→ポジティブ反応、質問→質問、それ以外→ポジティブ反応の定型文を使います。"), sel(Object.entries(TPL_LABEL), a.template_category, (v) => (a.template_category = v)));
       if (a.source === "ai") {
         const ta = h("textarea", { oninput: (e) => (a.prompt = e.target.value) }); ta.value = a.prompt;
         row.append(lbl("AIへの指示（プロンプト）", "返信文を作るときの、役割や口調の指示です。出力の決まり（短く、リンクなし、日本語）は、自動で付きます。"), ta,

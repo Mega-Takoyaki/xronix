@@ -65,7 +65,7 @@ def test_valid_rules_are_normalized():
 def test_first_match_wins_and_filters(app):
     for r in app.rules.list():
         app.rules.delete(r["id"])
-    a = app.rules.create(rule(name="A: ファンの返信", events=["reply_to_post"], categories=["fan"], actions=[{"type": "like"}]))
+    a = app.rules.create(rule(name="A: ポジティブ反応の返信", events=["reply_to_post"], categories=["fan"], actions=[{"type": "like"}]))
     b = app.rules.create(rule(name="B: 返信すべて", events=["reply_to_post", "reply_to_reply"], actions=[{"type": "ignore"}]))
     off = app.rules.create(rule(name="C: 無効", enabled=False, events=["mention"], actions=[{"type": "ignore"}]))
     assert app.rules.match("reply_to_post", "fan")["id"] == a["id"]            # 上から見て、最初に合致したもの
@@ -92,7 +92,7 @@ def test_rules_api_crud_move_and_simulate(app):
     call(api, "POST", f"/api/rules/{ids[0]}/move", {"direction": "up"})         # 端は何も起きない
     assert [r["id"] for r in app.rules.list()] == ids
     sim = call(api, "POST", "/api/rules/simulate", {"event": "reply_to_post", "category": "fan"})[1]
-    assert sim["rule"]["name"].startswith("ファンの感想") and sim["rule"]["actions"] == ["返信案を作り、承認待ちに入れる"]
+    assert sim["rule"]["name"].startswith("ポジティブ反応") and sim["rule"]["actions"] == ["返信案を作り、承認待ちに入れる"]
     assert call(api, "POST", "/api/rules/simulate", {"event": "metric_likes"})[0] == 400
     assert call(api, "DELETE", f"/api/rules/{created['id']}")[0] == 200
     assert len(app.rules.list()) == 6
