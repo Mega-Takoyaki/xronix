@@ -260,8 +260,10 @@ async function renderJobs() {
       if (r.mentions_cursor && r.mentions_cursor.at) rows.push(row("メンション一覧の取得位置", r.mentions_cursor.at));
     }
     const verdict = h("ul", {}, r.verdict.map((t) => h("li", {}, t)));
+    const probes = r.probes && r.probes.length ? h("table", { style: "margin-top:8px" }, h("thead", {}, h("tr", {}, ["検索の確認", "検索の式", "結果"].map((c) => h("th", {}, c)))),
+      r.probes.map((p) => h("tr", {}, h("td", {}, p.label), h("td", { style: "word-break:break-all" }, p.query), h("td", { class: p.error ? "err" : p.contains ? "ok" : "warn" }, p.error ? p.error : `${p.count}件${p.contains ? "（この投稿を含む）" : "（この投稿を含まない）"}`)))) : null;
     const canIngest = r.found && !r.ingested && !r.own_post;
-    diagOut().replaceChildren(...[h("table", {}, rows), h("div", { style: "margin-top:6px" }, h("b", {}, "診断")), verdict,
+    diagOut().replaceChildren(...[h("table", {}, rows), h("div", { style: "margin-top:6px" }, h("b", {}, "診断")), verdict, probes,
       canIngest ? h("button", { class: "primary", onclick: async () => { if (confirm("この投稿を取り込みます。ルールが動きます（いいね・自動送信などを設定している場合は、実行されます）。よろしいですか？")) await runDiag(true); } }, "この投稿を取り込む") : null,
       h("div", { class: "muted" }, `読み取り ${r.reads}件`)].filter(Boolean));
   };

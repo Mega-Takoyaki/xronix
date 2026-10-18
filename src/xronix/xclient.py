@@ -149,6 +149,12 @@ class LiveX:
                 break
         return {"tweets": tweets, "newest_id": newest, "reads": reads, "truncated": bool(next_token)}
 
+    def search_recent(self, token: str, query: str, max_results: int = 10) -> dict:
+        """直近7日の検索（診断用。1ページだけ）。"""
+        data = self._get(token, "/2/tweets/search/recent", {"query": query, "max_results": max(10, min(100, max_results)), "tweet.fields": TWEET_FIELDS})
+        tw = data.get("data", [])
+        return {"tweets": tw, "reads": len(tw)}
+
     def quotes_of(self, token: str, tweet_id: str, max_results: int = 100) -> dict:
         """ある投稿の引用を取る。"""
         data = self._get(token, f"/2/tweets/{tweet_id}/quote_tweets", {"max_results": max(10, min(100, max_results)), "tweet.fields": TWEET_FIELDS})
@@ -215,6 +221,7 @@ class MockX:
         self.tweets_db: dict[str, dict] = {}
         self.replies_queue: list[dict] = []  # 自分の@を含まない返信（検索でだけ取れるもの）
         self.quotes_db: dict[str, list[dict]] = {}  # 投稿ID → その引用
+        self.search_index: list[dict] = []  # Xの検索に載っている投稿（診断のモック用）
         self.fail_next_like = False
         self._seq = 1_900_000_000_000_000_000
         self.fail_next_create: str | None = None  # テスト用: "definite" | "unknown"
@@ -273,6 +280,16 @@ class MockX:
         if since_id:
             tw = [t for t in tw if int(t["id"]) > int(since_id)]
         return {"tweets": tw, "newest_id": tw[0]["id"] if tw else None, "reads": len(tw), "truncated": False}
+
+    def search_recent(self, token, query, max_results=10):
+        """モック: search_index（Xの検索に載っている投稿）から、from:／conversation_id: で絞る。"""
+        tw = list(self.search_index)
+        for part in query.split():
+            if part.startswith("from:"):
+                tw = [t for t in tw if t.get("author_id") == part[5:]]
+            elif part.startswith("conversation_id:"):
+                tw = [t for t in tw if t.get("conversation_id") == part[16:]]
+        return {"tweets": tw[:max_results], "reads": len(tw[:max_results])}
 
     def quotes_of(self, token, tweet_id, max_results=100):
         tw = list(self.quotes_db.get(tweet_id, []))

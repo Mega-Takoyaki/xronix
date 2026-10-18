@@ -442,3 +442,43 @@ def test_verbose_log_lists_own_posts_with_x_counts(app):
     r = run(app)
     text = "\n".join(l["message"] for l in app.repo.list("logs") if l["level"] == "debug" and l["extra"].get("run_id") == r["id"])
     assert f"自投稿 {p['id']}" in text and "Xの数 返信4・引用1" in text and "取り込み済み 返信0・引用0" in text
+
+
+def test_diagnose_probes_search_and_explains_when_x_hides_the_tweet(app):
+    api = start(app)
+    tid = str((int(app.now().timestamp() * 1000) - 1288834974657 - 3600_000) << 22)  # アプリの時計で、1時間前の投稿ID
+    _tweet(app, tid, author_id="800", in_reply_to_user_id="9999", conversation_id="1", referenced_tweets=[{"type": "replied_to", "id": "1"}])
+    _, d = api.handle("POST", "/api/diagnose/tweet", {}, {"input": tid})[:2]
+    assert [p["contains"] for p in d["probes"]] == [False, False]
+    assert any("どの検索にも、この投稿は出ませんでした" in x for x in d["verdict"])
+    app.x.search_index.append(app.x.tweets_db[tid])  # Xの検索に載っている場合
+    _, d = api.handle("POST", "/api/diagnose/tweet", {}, {"input": tid})[:2]
+    assert all(p["contains"] for p in d["probes"]) and any("検索には、この投稿が出ます" in x for x in d["verdict"])
+    assert d["probes"][0]["query"].startswith("from:800 to:")
+
+
+def test_diagnose_skips_probe_for_old_tweets_and_reports_probe_errors(app):
+    from xronix.xclient import XError
+    api = start(app)
+    old = str((int(app.now().timestamp() * 1000) - 1288834974657 - 10 * 86400_000) << 22)  # アプリの時計で、10日前の投稿ID
+    _tweet(app, old, in_reply_to_user_id="9999", referenced_tweets=[{"type": "replied_to", "id": "1"}])
+    _, d = api.handle("POST", "/api/diagnose/tweet", {}, {"input": old})[:2]
+    assert d["probes"] == [] and any("7日以上たっている" in x for x in d["verdict"])
+    tid = str((int(app.now().timestamp() * 1000) - 1288834974657 - 3600_000) << 22)
+    _tweet(app, tid, in_reply_to_user_id="9999", referenced_tweets=[{"type": "replied_to", "id": "1"}])
+    def boom(*a, **k): raise XError("検索は使えません", 403)
+    app.x.search_recent = boom
+    _, d = api.handle("POST", "/api/diagnose/tweet", {}, {"input": tid})[:2]
+    assert all("error" in p for p in d["probes"]) and any("検索がエラーになりました" in x for x in d["verdict"])
+
+
+def test_live_search_recent_request():
+    import urllib.parse
+    from conftest import FakeHttp
+    from xronix.xclient import LiveX
+    http = FakeHttp()
+    x = LiveX(http, sleep=lambda s: None)
+    http.push(200, {"data": [{"id": "5"}], "meta": {}})
+    r = x.search_recent("tok", "from:800 to:me", 10)
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(http.calls[0]["url"]).query)
+    assert r["reads"] == 1 and q["query"] == ["from:800 to:me"] and q["max_results"] == ["10"] and "since_id" not in q
