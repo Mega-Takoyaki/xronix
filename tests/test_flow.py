@@ -312,3 +312,50 @@ def test_truncated_mentions_message_is_honest(app):
     app.x.mentions = lambda *a, **k: {**orig(*a, **k), "truncated": True}
     r = run(app)
     assert "取り込めませんでした" in r["message"] and "持ち越" not in r["message"]
+
+
+def test_verbose_logs_explain_each_step(app):
+    start(app)
+    add(app, "可愛い投稿ありがとうございます！")
+    app.x.replies_queue.append({"id": "2100000000000000009", "author_id": "710", "text": "返信", "conversation_id": "1",
+                                "in_reply_to_user_id": "9999", "referenced_tweets": [{"type": "replied_to", "id": "1"}]})
+    r = run(app)
+    msgs = [l["message"] for l in app.repo.list("logs") if l["level"] == "debug" and l["extra"].get("run_id") == r["id"]]
+    text = "\n".join(msgs)
+    for needle in ("開始:", "メンション一覧: 1件を取得", "返信の検索（to:@", "取り込み:", "取得元=メンション一覧", "取得元=返信の検索", "終了:"):
+        assert needle in text, needle
+    assert "可愛い投稿ありがとう" not in text  # 本文は記録しない
+    assert all(m["source"] for m in mentions(app))
+    # メンション一覧と検索の両方に出た投稿は、1回だけ取り込み、もう一方は「取り込み済み」と記録する
+    both = {"id": "2300000000000000001", "author_id": "711", "text": "両方に出る返信", "conversation_id": "1",
+            "in_reply_to_user_id": "9999", "referenced_tweets": [{"type": "replied_to", "id": "1"}]}
+    app.x.queue.append(both)
+    app.x.replies_queue.append(both)
+    r2 = run(app)
+    assert r2["new"] == 1
+    assert any("取り込み済み" in l["message"] for l in app.repo.list("logs") if l["level"] == "debug" and l["extra"].get("run_id") == r2["id"])
+
+
+def test_verbose_log_can_be_turned_off_and_logs_api_filters(app):
+    api = start(app)
+    app.settings.update("job", {"verbose_log": False})
+    add(app, "x")
+    r = run(app)
+    assert not [l for l in app.repo.list("logs") if l["level"] == "debug" and l["extra"].get("run_id") == r["id"]]
+    app.settings.update("job", {"verbose_log": True})
+    r2 = run(app)
+    _, body = api.handle("GET", "/api/logs", {}, {})[:2]
+    assert all(i["level"] != "debug" for i in body["items"])
+    _, body = api.handle("GET", "/api/logs", {"level": "all", "run_id": r2["id"]}, {})[:2]
+    assert body["items"] and all(i["extra"]["run_id"] == r2["id"] for i in body["items"])
+
+
+def test_x_error_message_includes_reason(app):
+    from conftest import FakeHttp
+    from xronix.xclient import LiveX, XError
+    http = FakeHttp()
+    x = LiveX(http, sleep=lambda s: None)
+    http.push(403, {"title": "Forbidden", "detail": "Your client app is not configured with the appropriate oauth1 app permissions for this endpoint."})
+    with pytest.raises(XError) as e:
+        x.replies_to_me("tok", "example_account", None)
+    assert "/2/tweets/search/recent" in str(e.value) and "HTTP 403" in str(e.value) and "Forbidden" in str(e.value) and "tok" not in str(e.value)

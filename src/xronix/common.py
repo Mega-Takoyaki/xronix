@@ -69,7 +69,8 @@ class Lease:
 class Logger:
     """ログをリポジトリに保存する。秘密情報は渡さないこと。"""
 
-    KEEP = 1000
+    KEEP = 1000        # 情報・警告・エラー
+    DEBUG_KEEP = 3000  # 詳細
 
     def __init__(self, repo, now=utcnow):
         self.repo, self.now = repo, now
@@ -80,17 +81,20 @@ class Logger:
         lid = iso(t) + "-" + uuid.uuid4().hex[:4]
         self.repo.put("logs", lid, {
             "id": lid, "ts": iso(t), "level": level, "kind": kind, "message": message, "extra": extra,
-            "ttl": int(t.timestamp()) + 60 * 86400,
+            "ttl": int(t.timestamp()) + (7 if level == "debug" else 60) * 86400,
         })
         self._n += 1
         if self._n % 100 == 0:
             self._prune()
 
+    def debug(self, kind, message, **extra): self.log("debug", kind, message, **extra)
     def info(self, kind, message, **extra): self.log("info", kind, message, **extra)
     def warn(self, kind, message, **extra): self.log("warn", kind, message, **extra)
     def error(self, kind, message, **extra): self.log("error", kind, message, **extra)
 
     def _prune(self) -> None:
         rows = self.repo.list("logs")
-        for r in rows[: max(0, len(rows) - self.KEEP)]:
-            self.repo.delete("logs", r["id"])
+        for group, keep in ((False, self.KEEP), (True, self.DEBUG_KEEP)):
+            part = [r for r in rows if (r["level"] == "debug") == group]
+            for r in part[: max(0, len(part) - keep)]:
+                self.repo.delete("logs", r["id"])

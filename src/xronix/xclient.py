@@ -95,7 +95,7 @@ class LiveX:
         if r.status == 401:
             raise AuthRequired("アクセストークンが無効です", 401)
         if r.status != 200:
-            raise XError(f"X APIの取得に失敗しました（HTTP {r.status}）", r.status)
+            raise XError(f"X APIの取得に失敗しました: GET {path}（HTTP {r.status}）{_error_detail(r)}", r.status)
         return _json(r)
 
     def me(self, token: str) -> dict:
@@ -298,6 +298,16 @@ class MockX:
             raise CreateError("モックの失敗", 403 if kind == "definite" else None, definite=kind == "definite")
         self.sent.append({"text": text, "in_reply_to": in_reply_to})
         return "mock-" + new_id()
+
+
+def _error_detail(r: Response) -> str:
+    """Xのエラー応答から、原因が分かる部分（title／detail）だけを取り出す。トークンなどは含まれない。"""
+    b = _json(r)
+    parts = [str(b.get(k)) for k in ("title", "detail") if isinstance(b.get(k), str)]
+    if not parts and isinstance(b.get("errors"), list) and b["errors"]:
+        e = b["errors"][0]
+        parts = [str(e.get(k)) for k in ("title", "message", "detail") if isinstance(e, dict) and isinstance(e.get(k), str)]
+    return (" — " + " / ".join(parts))[:300] if parts else ""
 
 
 def _json(r: Response) -> dict:

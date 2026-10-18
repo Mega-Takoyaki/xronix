@@ -406,10 +406,18 @@ class Api:
         return _ok(stats_mod.build(self.app.repo, self.app.now))
 
     def logs(self, q, b) -> Result:
-        level = q.get("level", "")
-        rows = self.app.repo.list("logs", limit=300, reverse=True)
-        if level:
+        level = q.get("level", "")  # 空: 詳細以外すべて。"all": 詳細も含める。
+        run_id = q.get("run_id", "")
+        rows = self.app.repo.list("logs", limit=2000, reverse=True)
+        if level == "all":
+            pass
+        elif level:
             rows = [r for r in rows if r["level"] == level]
+        else:
+            rows = [r for r in rows if r["level"] != "debug"]
+        if run_id:
+            rows = [r for r in rows if (r.get("extra") or {}).get("run_id") == run_id]
+        rows = rows[:500]
         for r in rows:
             r.pop("ttl", None)
         return _ok({"items": rows})

@@ -5,9 +5,14 @@ import random
 from datetime import timedelta
 
 from .classify import OTHER
-from .events import METRIC_EVENTS, classify_event
+from .classify import LABELS as CAT_LABELS
+from .events import LABELS, METRIC_EVENTS, classify_event
 from .common import Lease, iso, new_id, parse_iso, utcnow
 from .xclient import AuthRequired, XError
+
+def cat_label(c: str) -> str:
+    return CAT_LABELS.get(c, c)
+
 
 MAX_CATCHUP_PAGES = 10  # 新着が多いときに、1回で追いつくページ数の上限（1ページ100件）
 COST_READ = 0.001
@@ -121,6 +126,11 @@ class JobRunner:
             self.plan("after_run")
         return run
 
+    def _dbg(self, run: dict, message: str, **extra) -> None:
+        """処理の詳細ログ（設定でオフにできる）。投稿の本文やトークンは記録しない。"""
+        if self.settings.get("job")["verbose_log"]:
+            self.log.debug("job", message, run_id=run["id"], **extra)
+
     # --- 本体 ---
     def _execute(self, run: dict) -> None:
         cfg = self.settings.get("job")
@@ -130,9 +140,17 @@ class JobRunner:
         token = self.tokens.get_access_token()
         cursor = (self.repo.get("state", "cursor") or {}).get("since_id")
         first = cursor is None
+        enabled = {}
+        for r in (self.rules.list() if self.rules else []):
+            if r["enabled"]:
+                for e in r["events"]:
+                    enabled[e] = enabled.get(e, 0) + 1
+        self._dbg(run, f"開始: 取得位置={cursor or 'なし（初回）'}、初回の動作={cfg['initial_mode']}、取得範囲の拡張={'オン' if cfg['wide_fetch'] else 'オフ'}、"
+                       f"有効なルール（反応の種類ごと）={enabled or 'なし'}、アカウント=@{xcfg.get('username') or '未取得'}")
         res = self.x.mentions(token, xcfg["user_id"], cursor, max_pages=1 if first and cfg["initial_mode"] == "from_now" else max(cfg["max_pages"], MAX_CATCHUP_PAGES),
                               max_results=5 if first and cfg["initial_mode"] == "from_now" else 100)
         run["fetched"], run["reads"] = len(res["tweets"]), res["reads"]
+        self._dbg(run, f"メンション一覧: {len(res['tweets'])}件を取得（最新ID={res['newest_id'] or 'なし'}、続きあり={'はい' if res.get('truncated') else 'いいえ'}）")
         if first and cfg["initial_mode"] == "from_now":
             # 現在地点から始める: 過去分は取り込まず、カーソルだけ進める
             if res["newest_id"]:
@@ -140,9 +158,10 @@ class JobRunner:
             else:
                 self.repo.put("state", "cursor", {"since_id": "0"})
             run["message"] = "初回のため現在地点から開始しました（過去分は取り込みません）"
+            self._dbg(run, f"初回のため、取り込まずに取得位置だけを記録しました（位置={res['newest_id'] or '0'}）。返信の検索と引用の取得は、次回の実行から行います")
             return
         for tw in reversed(res["tweets"]):  # 古い順
-            self._ingest(tw, run, xcfg["user_id"])
+            self._ingest(tw, run, xcfg["user_id"], "メンション一覧")
         if res["newest_id"]:
             self.repo.put("state", "cursor", {"since_id": res["newest_id"]})
         if res.get("truncated"):
@@ -153,6 +172,7 @@ class JobRunner:
         pending = len(self.pending_ids())
         if run["new"] and pending:
             run["notified"] = self.notifier.notify_pending(pending)
+        self._dbg(run, f"終了: 取得{run['fetched']}件、新規{run['new']}件、返信案{run['drafted']}件、承認待ち{pending}件、読み取り{run['reads']}件＋他人の投稿{run['thread_reads']}件")
 
     def _check_metrics(self, run: dict, token: str, my_id: str) -> None:
         """自投稿の数値（いいね数など）が基準以上になったものに、ルールを実行する。確認は設定の間隔ごと。"""
@@ -160,13 +180,16 @@ class JobRunner:
         cfg, st, now = self.settings.get("job"), self.state(), self.now()
         need_quotes = bool(cfg["wide_fetch"] and self.rules and self.rules.reaction_rules("quote"))
         if not rules and not need_quotes:
+            self._dbg(run, "自投稿の確認: 数値のルールも引用のルールも無いため、行いません")
             return
         last = st.get("last_metrics_at", "")
         if last and parse_iso(last) + timedelta(minutes=cfg["metrics_interval_minutes"]) > now:
+            self._dbg(run, f"自投稿の確認: 前回（{last}）から{cfg['metrics_interval_minutes']}分たっていないため、今回は行いません")
             return
         start = (now - timedelta(days=cfg["metrics_window_days"])).strftime("%Y-%m-%dT%H:%M:%SZ")
         res = self.x.own_posts(token, my_id, start, cfg["metrics_max_posts"])
         run["reads"] += res["reads"]
+        self._dbg(run, f"自投稿の確認: 自分の投稿{len(res['tweets'])}件を読みました（数値のルール{len(rules)}件、引用の確認={'あり' if need_quotes else 'なし'}）")
         for tw in res["tweets"]:
             metrics = tw.get("public_metrics", {})
             for rule in rules:
@@ -191,8 +214,10 @@ class JobRunner:
         """メンション一覧に出ない返信（自分の@が無い返信）を、検索で補う。失敗しても、ジョブ全体は失敗にしない。"""
         cfg = self.settings.get("job")
         if not cfg["wide_fetch"] or not xcfg.get("username") or not self.rules:
+            self._dbg(run, "返信の検索: 行いません（" + ("取得範囲の拡張がオフ" if not cfg["wide_fetch"] else "アカウント名が未取得") + "）")
             return
         if not self.rules.reaction_rules("reply_to_post", "reply_to_reply"):
+            self._dbg(run, "返信の検索: 「自分の投稿への返信」「自分の返信への返信」を対象にする有効なルールが無いため、行いません")
             return
         try:
             cur = (self.repo.get("state", "reply_cursor") or {}).get("since_id")
@@ -200,11 +225,13 @@ class JobRunner:
             skip = first and fresh and cfg["initial_mode"] == "from_now"  # 取得を始めたばかりなら、過去分は取り込まない
             res = self.x.replies_to_me(token, xcfg["username"], cur, max_pages=1 if skip else MAX_CATCHUP_PAGES)
             run["thread_reads"] += res["reads"]
+            self._dbg(run, f"返信の検索（to:@{xcfg['username']}）: {len(res['tweets'])}件を取得（取得位置={cur or 'なし'}、最新ID={res['newest_id'] or 'なし'}、続きあり={'はい' if res.get('truncated') else 'いいえ'}）")
             if skip:
                 self.repo.put("state", "reply_cursor", {"since_id": res["newest_id"] or "0"})
+                self._dbg(run, "返信の検索: 取得を始めたばかりのため、取り込まずに取得位置だけを記録しました")
                 return
             for tw in reversed(res["tweets"]):
-                self._ingest(tw, run, xcfg["user_id"])
+                self._ingest(tw, run, xcfg["user_id"], "返信の検索")
             if res["newest_id"]:
                 self.repo.put("state", "reply_cursor", {"since_id": res["newest_id"]})
             elif first:
@@ -212,12 +239,13 @@ class JobRunner:
         except AuthRequired:
             raise
         except XError as e:
-            self.log.warn("job", f"返信の検索に失敗しました（メンションの取得は完了）: {e}", run_id=run["id"])
+            self.log.warn("job", f"返信の検索に失敗しました（メンションの取得は完了）: {e}", run_id=run["id"], status=e.status)
 
     def _fetch_quotes(self, run: dict, token: str, my_id: str, posts: list[dict]) -> None:
         """引用の数が増えた自分の投稿だけ、引用を取りに行く。"""
         seen = self.repo.get("state", "quote_counts") or {}
         counts = dict(seen)
+        self._dbg(run, f"引用の確認: 自分の投稿{len(posts)}件のうち、引用数が増えたものだけを取りに行きます")
         try:
             for p in posts:
                 n = int(p.get("public_metrics", {}).get("quote_count", 0))
@@ -225,21 +253,23 @@ class JobRunner:
                     continue
                 res = self.x.quotes_of(token, p["id"])
                 run["thread_reads"] += res["reads"]
+                self._dbg(run, f"引用の取得: 投稿{p['id']}（引用数 {seen.get(p['id'], 0)} → {n}）から{len(res['tweets'])}件を取得")
                 for tw in reversed(res["tweets"]):
-                    self._ingest(tw, run, my_id)
+                    self._ingest(tw, run, my_id, "引用の取得")
                 counts[p["id"]] = n
         except AuthRequired:
             raise
         except XError as e:
-            self.log.warn("job", f"引用の取得に失敗しました: {e}", run_id=run["id"])
+            self.log.warn("job", f"引用の取得に失敗しました: {e}", run_id=run["id"], status=e.status)
         finally:
             self.repo.put("state", "quote_counts", counts)
 
     def pending_ids(self) -> list[str]:
         return [m["id"] for m in self.repo.list("mentions") if m["state"] in ("pending", "review")]
 
-    def _ingest(self, tw: dict, run: dict, my_id: str) -> dict | None:
+    def _ingest(self, tw: dict, run: dict, my_id: str, source: str = "") -> dict | None:
         if tw.get("author_id") == my_id:
+            self._dbg(run, f"スキップ: {tw.get('id')}（自分の投稿。取得元={source}）")
             return None  # 自分の投稿は扱わない
         now = iso(self.now())
         kind = classify_event(tw, my_id)
@@ -250,13 +280,15 @@ class JobRunner:
             "kind": kind, "target_tweet_id": tw["id"], "parent_id": refs.get("replied_to") or refs.get("quoted") or "",
             "category": OTHER, "state": "new", "draft_text": "", "draft_template_id": "", "final_text": "",
             "sent_tweet_id": "", "error": "", "classified_by": "", "actions": [], "rule_id": "", "rule_name": "",
-            "fetched_at": now, "updated_at": now,
+            "fetched_at": now, "updated_at": now, "source": source,
         }
         if not self.repo.put_if_absent("mentions", tw["id"], item):
+            self._dbg(run, f"スキップ: {tw['id']}（取り込み済み。取得元={source}）")
             return None
         run["new"] += 1
         if self.repo.get("blocklist", item["author_id"]) is not None:
             item.update(category=self.ai_rule_only(item["text"]), state="blocked", classified_by="rule")
+            self._dbg(run, f"取り込み: {tw['id']}（取得元={source}）→ ブロック対象の投稿者のため、処理しません")
             self.repo.put("mentions", item["id"], item)
             return item
         cat, by = self.ai.classify(item["text"])
@@ -265,6 +297,8 @@ class JobRunner:
         item.update(category=cat, classified_by=by)
         run["by_category"][cat] = run["by_category"].get(cat, 0) + 1
         rule = self.rules.match(kind, cat) if self.rules else None
+        self._dbg(run, f"取り込み: {tw['id']}（取得元={source}、種類={LABELS.get(kind, kind)}、分類={cat_label(cat)}（{by}）、投稿者ID={item['author_id'] or '不明'}、"
+                       f"{len(item['text'])}文字）→ ルール: {rule['name'] if rule else '該当なし'}")
         if rule:
             return self.engine.run(item, rule, run)
         item.update(state="review", actions=[{"type": "none", "label": "該当するルールなし", "ok": True, "detail": "該当するルールが無いため、人が確認します"}])
