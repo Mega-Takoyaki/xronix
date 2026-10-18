@@ -290,8 +290,9 @@ def test_quotes_fetched_only_when_count_grows(app, clock):
 def test_reset_cursor_also_resets_wide_state(app):
     api = start(app)
     app.repo.put("state", "quote_counts", {"1": 3})
+    app.repo.put("state", "reply_counts", {"1": 3})
     api.handle("POST", "/api/jobs/reset-cursor", {}, {"mode": "from_now"})
-    assert app.repo.get("state", "reply_cursor") is None and app.repo.get("state", "quote_counts") is None
+    assert app.repo.get("state", "reply_cursor") is None and app.repo.get("state", "quote_counts") is None and app.repo.get("state", "reply_counts") is None
 
 
 def test_wide_fetch_failure_does_not_fail_the_run(app):
@@ -482,3 +483,44 @@ def test_live_search_recent_request():
     r = x.search_recent("tok", "from:800 to:me", 10)
     q = urllib.parse.parse_qs(urllib.parse.urlparse(http.calls[0]["url"]).query)
     assert r["reads"] == 1 and q["query"] == ["from:800 to:me"] and q["max_results"] == ["10"] and "since_id" not in q
+
+
+def test_conversation_search_fills_in_replies_x_counts_but_lists_miss(app, clock):
+    start(app)
+    p = app.x.add_post("自分の投稿")
+    p["public_metrics"]["reply_count"] = 3
+    pid = p["id"]
+    reply = {"id": "2300000000000000101", "author_id": "811", "text": "@example_mock Yummy", "conversation_id": pid, "in_reply_to_user_id": "9999",
+             "referenced_tweets": [{"type": "replied_to", "id": pid}]}
+    to_other = {"id": "2300000000000000102", "author_id": "812", "text": "他の人への返信", "conversation_id": pid, "in_reply_to_user_id": "12345",
+                "referenced_tweets": [{"type": "replied_to", "id": "2300000000000000101"}]}
+    own = {"id": "2300000000000000103", "author_id": "9999", "text": "自分の返信", "conversation_id": pid, "in_reply_to_user_id": "811"}
+    app.x.search_index += [reply, to_other, own]
+    r = run(app)
+    got = {m["id"]: m for m in mentions(app)}
+    assert set(got) == {reply["id"]} and got[reply["id"]]["source"] == "会話の検索" and got[reply["id"]]["kind"] == "reply_to_post"   # 自分宛てだけ。他人同士と自分の投稿は取らない
+    assert r["thread_reads"] == 3
+    assert app.repo.get("state", "reply_counts")[pid] == 3
+    # 返信数が増えていなければ、検索しない（費用を抑える）
+    clock.advance(minutes=800)
+    calls = []
+    orig = app.x.search_recent
+    app.x.search_recent = lambda *a, **k: (calls.append(a[1]), orig(*a, **k))[1]
+    run(app)
+    assert not [c for c in calls if c.startswith("conversation_id:")]
+    p["public_metrics"]["reply_count"] = 4
+    clock.advance(minutes=800)
+    run(app)
+    assert [c for c in calls if c.startswith("conversation_id:")] == [f"conversation_id:{pid}"]
+
+
+def test_conversation_search_failure_keeps_job_ok_and_retries_later(app):
+    from xronix.xclient import XError
+    start(app)
+    p = app.x.add_post("自分の投稿")
+    p["public_metrics"]["reply_count"] = 2
+    def boom(*a, **k): raise XError("検索は使えません", 403)
+    app.x.search_recent = boom
+    r = run(app)
+    assert r["status"] == "ok" and any("返信の補完（会話の検索）に失敗" in l["message"] for l in app.repo.list("logs"))
+    assert p["id"] not in (app.repo.get("state", "reply_counts") or {})   # 失敗したら、数を覚えない（次回、やり直す）

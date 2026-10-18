@@ -412,6 +412,7 @@ class Api:
         a.repo.delete("state", "cursor")
         a.repo.delete("state", "reply_cursor")
         a.repo.delete("state", "quote_counts")
+        a.repo.delete("state", "reply_counts")
         a.logger.warn("job", "取得位置をリセットしました（" + ("現在地点から始める" if mode == "from_now" else "過去分も取り込む") + "）")
         return _ok({"mode": mode})
 
