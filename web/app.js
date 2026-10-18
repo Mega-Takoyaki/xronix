@@ -233,6 +233,45 @@ async function renderJobs() {
         if (!confirm("取得位置をリセットし、次の実行で過去のメンションも取り込みます。\n\n・取り込み件数が多くなり、Xの読み取り費用が増えます（約$0.001／件）\n・自動送信のルールが有効だと、まとめて送信される恐れがあります\n\n本当に実行しますか？")) return;
         if (await act(() => api("POST", "/api/jobs/reset-cursor", { mode: "backfill" }), "リセットしました（次回は過去分も取り込みます）", "warn")) renderJobs();
       } }, "過去分も取り込むようにやり直す")));
+  const diag = h("div", { class: "card" }, h("h3", {}, "取得の診断", tip("取りこぼしの調査用です。投稿のURL（またはID）を入れると、その投稿をXから読み、返信先・本文の@・取り込み状況・取得位置との関係から、「なぜ取り込まれないか」を表示します。読み取りの費用は、1回約$0.005〜0.01です。「取り込む」を押すと、通常の取り込みと同じ処理（ルールも動く）で、承認待ちか履歴に入れます。")),
+    h("div", { class: "row" }, h("div", { class: "grow" }, h("input", { type: "text", id: "diag-input", placeholder: "https://x.com/…/status/… または 投稿のID" })),
+      h("button", { onclick: async (e) => { e.target.disabled = true; await runDiag(false); e.target.disabled = false; } }, "診断する"),
+      h("button", { title: "自分の投稿ごとに、Xが数える返信数・引用数と、取り込み済みの件数を並べます（約$0.001／投稿）", onclick: async (e) => {
+        e.target.disabled = true;
+        const r = await act(() => api("POST", "/api/diagnose/posts"), null);
+        if (r) showPosts(r);
+        e.target.disabled = false;
+      } }, "自投稿の返信数を確認")),
+    h("div", { id: "diag-out", style: "margin-top:10px" }));
+  const diagOut = () => $("#diag-out");
+  const runDiag = async (ingest) => {
+    const v = $("#diag-input").value.trim();
+    if (!v) return toast("投稿のURLかIDを入力してください", "warn");
+    const r = await act(() => api("POST", "/api/diagnose/tweet", { input: v, ingest }), null);
+    if (r) showTweet(r);
+  };
+  const row = (k, v) => h("tr", {}, h("th", { style: "white-space:nowrap;text-align:left;vertical-align:top;padding-right:12px" }, k), h("td", { style: "word-break:break-all" }, v));
+  const showTweet = (r) => {
+    const rows = [row("投稿", `${r.id}（${r.posted_at}）`)];
+    if (r.found) {
+      rows.push(row("種類", r.kind_label), row("投稿者ID", r.author_id), row("返信先のユーザー", r.in_reply_to_user_id ? `${r.in_reply_to_user_id}${r.directed_at_me ? "（自分）" : ""}` : "なし"),
+        row("本文の自分の@", r.mentions_me ? "あり" : "なし"), row("本文（先頭）", `${r.preview}${r.text_len > 60 ? "…" : ""}（${r.text_len}文字）`),
+        row("取り込み", r.ingested ? `済み（状態: ${r.ingested.state}、取得元: ${r.ingested.source}）` : "まだ"));
+      if (r.mentions_cursor && r.mentions_cursor.at) rows.push(row("メンション一覧の取得位置", r.mentions_cursor.at));
+    }
+    const verdict = h("ul", {}, r.verdict.map((t) => h("li", {}, t)));
+    const canIngest = r.found && !r.ingested && !r.own_post;
+    diagOut().replaceChildren(...[h("table", {}, rows), h("div", { style: "margin-top:6px" }, h("b", {}, "診断")), verdict,
+      canIngest ? h("button", { class: "primary", onclick: async () => { if (confirm("この投稿を取り込みます。ルールが動きます（いいね・自動送信などを設定している場合は、実行されます）。よろしいですか？")) await runDiag(true); } }, "この投稿を取り込む") : null,
+      h("div", { class: "muted" }, `読み取り ${r.reads}件`)].filter(Boolean));
+  };
+  const showPosts = (r) => {
+    diagOut().replaceChildren(
+      h("div", { class: "muted" }, `直近${r.window_days}日の自分の投稿（読み取り ${r.reads}件）。「Xの数」が「取り込み済み」より多い投稿は、返信や引用を取りこぼしている目安です（返信数には、他人同士の返信も含まれます）。`),
+      h("table", {}, h("thead", {}, h("tr", {}, ["投稿", "日時", "Xの返信", "取り込み済み", "Xの引用", "取り込み済み"].map((c) => h("th", {}, c)))),
+        r.posts.map((p) => h("tr", {}, h("td", {}, `${p.preview || p.id}`), h("td", {}, p.posted_at.slice(5, 16)), h("td", {}, p.x_replies),
+          h("td", { class: p.x_replies > p.got_replies ? "warn" : "" }, p.got_replies), h("td", {}, p.x_quotes), h("td", { class: p.x_quotes > p.got_quotes ? "warn" : "" }, p.got_quotes)))));
+  };
   const dev = status.mode === "mock" ? h("div", { class: "card" }, h("h3", {}, "動作確認（モック専用）", tip("モックの取得キューへ、サンプルのメンションを追加します。「今すぐ実行」で取り込まれます。")),
     h("div", { class: "row" },
       h("button", { onclick: async () => { await act(() => api("POST", "/api/dev/mock-mentions", { count: 4 }), "サンプルを4件追加しました"); } }, "サンプルのメンションを追加"),
@@ -240,7 +279,7 @@ async function renderJobs() {
   const runs = h("div", { class: "card" }, h("h3", {}, "実行履歴"), d.runs.length ? h("table", {}, h("tr", {}, ["開始", "起動", "結果", "取得", "新規", "返信案", "概算費用", "メッセージ"].map((c) => h("th", {}, c))),
     d.runs.map((r) => h("tr", {}, h("td", {}, fmtSec(r.started_at)), h("td", {}, TRIGGER[r.trigger] || r.trigger), h("td", { class: r.status === "ok" ? "ok" : "err" }, r.status === "ok" ? "成功" : "失敗"),
       h("td", {}, r.fetched), h("td", {}, r.new), h("td", {}, r.drafted), h("td", {}, `$${r.est_cost_usd}`), h("td", {}, r.message)))) : h("div", { class: "muted" }, "まだ実行されていません"));
-  view.replaceChildren(...[ctl, reset, dev, runs].filter(Boolean));
+  view.replaceChildren(...[ctl, diag, reset, dev, runs].filter(Boolean));
 }
 
 // ---------- 統計・ログ ----------

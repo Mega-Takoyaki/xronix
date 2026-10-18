@@ -126,6 +126,13 @@ class JobRunner:
             self.plan("after_run")
         return run
 
+    def ingest_manual(self, tw: dict) -> dict | None:
+        """診断画面から、指定した投稿を取り込む。通常の取り込みと同じ処理（ルールも動く）。"""
+        t0 = self.now()
+        run = {"id": iso(t0) + "-manual", "trigger": "manual", "started_at": iso(t0), "finished_at": "", "status": "", "message": "",
+               "fetched": 1, "new": 0, "reads": 0, "thread_reads": 0, "by_category": {}, "drafted": 0, "actions": 0, "ai_calls": 0, "est_cost_usd": 0.0}
+        return self._ingest(tw, run, self.settings.get("x")["user_id"], "手動の取り込み（診断）")
+
     def _dbg(self, run: dict, message: str, **extra) -> None:
         """処理の詳細ログ（設定でオフにできる）。投稿の本文やトークンは記録しない。"""
         if self.settings.get("job")["verbose_log"]:
@@ -190,6 +197,14 @@ class JobRunner:
         res = self.x.own_posts(token, my_id, start, cfg["metrics_max_posts"])
         run["reads"] += res["reads"]
         self._dbg(run, f"自投稿の確認: 自分の投稿{len(res['tweets'])}件を読みました（数値のルール{len(rules)}件、引用の確認={'あり' if need_quotes else 'なし'}）")
+        if cfg["verbose_log"]:
+            mine = self.repo.list("mentions")
+            for tw in res["tweets"]:
+                pm = tw.get("public_metrics", {})
+                got_r = sum(1 for m in mine if m.get("conversation_id") == tw["id"] and m.get("kind") in ("reply_to_post", "reply_to_reply"))
+                got_q = sum(1 for m in mine if m.get("kind") == "quote" and m.get("parent_id") == tw["id"])
+                self._dbg(run, f"自投稿 {tw['id']}（{tw.get('created_at', '')}）: Xの数 返信{pm.get('reply_count', 0)}・引用{pm.get('quote_count', 0)}・いいね{pm.get('like_count', 0)}"
+                               f" ／ 取り込み済み 返信{got_r}・引用{got_q}")
         for tw in res["tweets"]:
             metrics = tw.get("public_metrics", {})
             for rule in rules:
