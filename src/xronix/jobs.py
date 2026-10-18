@@ -186,7 +186,8 @@ class JobRunner:
         rules = self.rules.metric_rules() if self.rules else []
         cfg, st, now = self.settings.get("job"), self.state(), self.now()
         need_quotes = bool(cfg["wide_fetch"] and self.rules and self.rules.reaction_rules("quote"))
-        if not rules and not need_quotes:
+        need_replies = bool(cfg["wide_fetch"] and self.rules and self.rules.reaction_rules("reply_to_post", "reply_to_reply"))
+        if not rules and not need_quotes and not need_replies:
             self._dbg(run, "自投稿の確認: 数値のルールも引用のルールも無いため、行いません")
             return
         last = st.get("last_metrics_at", "")
@@ -196,7 +197,7 @@ class JobRunner:
         start = (now - timedelta(days=cfg["metrics_window_days"])).strftime("%Y-%m-%dT%H:%M:%SZ")
         res = self.x.own_posts(token, my_id, start, cfg["metrics_max_posts"])
         run["reads"] += res["reads"]
-        self._dbg(run, f"自投稿の確認: 自分の投稿{len(res['tweets'])}件を読みました（数値のルール{len(rules)}件、引用の確認={'あり' if need_quotes else 'なし'}）")
+        self._dbg(run, f"自投稿の確認: 自分の投稿{len(res['tweets'])}件を読みました（数値のルール{len(rules)}件、引用の確認={'あり' if need_quotes else 'なし'}、返信の補完={'あり' if need_replies else 'なし'}）")
         if cfg["verbose_log"]:
             mine = self.repo.list("mentions")
             for tw in res["tweets"]:
@@ -223,6 +224,8 @@ class JobRunner:
                     self.engine.run(item, rule, run)
         if need_quotes:
             self._fetch_quotes(run, token, my_id, res["tweets"])
+        if need_replies:
+            self._fetch_conversation_replies(run, token, my_id, res["tweets"])
         self._save(last_metrics_at=iso(now))
 
     def _wide_fetch(self, run: dict, token: str, xcfg: dict, fresh: bool) -> None:
@@ -255,6 +258,33 @@ class JobRunner:
             raise
         except XError as e:
             self.log.warn("job", f"返信の検索に失敗しました（メンションの取得は完了）: {e}", run_id=run["id"], status=e.status)
+
+    def _fetch_conversation_replies(self, run: dict, token: str, my_id: str, posts: list[dict]) -> None:
+        """Xが数える返信数が増えた自分の投稿だけ、会話の検索（conversation_id:）で、自分宛ての返信を取る。
+        メンション一覧と、返信の検索（to:）の取りこぼしを補う。実機の診断で、この検索には出ることを確認した。"""
+        username = (self.settings.get("x").get("username") or "").lower()
+        seen = self.repo.get("state", "reply_counts") or {}
+        counts = dict(seen)
+        self._dbg(run, f"返信の補完: 自分の投稿{len(posts)}件のうち、Xの返信数が増えたものだけ、会話の検索で取りに行きます")
+        try:
+            for p in posts:
+                n = int(p.get("public_metrics", {}).get("reply_count", 0))
+                if n <= int(seen.get(p["id"], 0)):
+                    continue
+                res = self.x.search_recent(token, f"conversation_id:{p['id']}", 100)
+                run["thread_reads"] += res["reads"]
+                mine = [t for t in res["tweets"] if t.get("author_id") != my_id
+                        and (t.get("in_reply_to_user_id") == my_id or (username and "@" + username in (t.get("text") or "").lower()))]
+                self._dbg(run, f"返信の補完: 投稿{p['id']}（Xの返信数 {seen.get(p['id'], 0)} → {n}）の会話から{len(res['tweets'])}件、うち自分宛て{len(mine)}件")
+                for tw in sorted(mine, key=lambda t: int(t["id"])):
+                    self._ingest(tw, run, my_id, "会話の検索")
+                counts[p["id"]] = n
+        except AuthRequired:
+            raise
+        except XError as e:
+            self.log.warn("job", f"返信の補完（会話の検索）に失敗しました: {e}", run_id=run["id"], status=e.status)
+        finally:
+            self.repo.put("state", "reply_counts", counts)
 
     def _fetch_quotes(self, run: dict, token: str, my_id: str, posts: list[dict]) -> None:
         """引用の数が増えた自分の投稿だけ、引用を取りに行く。"""

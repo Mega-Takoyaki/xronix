@@ -133,7 +133,7 @@ class LiveX:
         tweets: list[dict] = []
         newest, next_token, reads = None, None, 0
         for _ in range(max_pages):
-            params = {"query": f"to:{username} -from:{username}", "max_results": 100, "tweet.fields": TWEET_FIELDS}
+            params = {"query": f"to:{username}", "max_results": 100, "tweet.fields": TWEET_FIELDS}
             if since_id:
                 params["since_id"] = since_id
             if next_token:
