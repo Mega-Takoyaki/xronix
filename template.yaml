@@ -76,7 +76,7 @@ Resources:
         AllowAdminCreateUserOnly: true   # 自己登録は無効。ユーザーは、このスタックが1人だけ作る
         InviteMessageTemplate:
           EmailSubject: XroniX の初回ログイン
-          EmailMessage: "XroniX の初回ログインの情報です。ログインID: {username}　仮パスワード: {####}　ログイン画面で入力すると、新しいパスワードの設定に進みます。"
+          EmailMessage: "XroniX の初回ログインの情報です。ログインID: {username} 仮パスワード: {####} ログイン画面で入力すると、新しいパスワードの設定に進みます。"
       Policies:
         PasswordPolicy:
           MinimumLength: 12
@@ -92,7 +92,7 @@ Resources:
       VerificationMessageTemplate:
         DefaultEmailOption: CONFIRM_WITH_CODE
         EmailSubject: XroniX のパスワード再設定コード
-        EmailMessage: "XroniX のパスワード再設定の確認コード: {####}　心当たりがない場合は、このメールを無視してください。"
+        EmailMessage: "XroniX のパスワード再設定の確認コード: {####} 心当たりがない場合は、このメールを無視してください。"
 
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient

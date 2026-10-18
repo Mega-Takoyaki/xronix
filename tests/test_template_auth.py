@@ -37,3 +37,13 @@ def test_deploy_workflow_does_not_leak_or_skip_email():
     wf = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     assert "ADMIN_EMAIL" in wf and "BASIC_AUTH" not in wf
     assert re.search(r"AdminEmail=\$ADMIN_EMAIL", wf)
+
+
+def test_cognito_message_templates_use_only_characters_cognito_accepts():
+    # Cognitoのメール文面は、使える文字に制限がある（全角スペースは不可で、デプロイが失敗した）。区切りは半角スペースにする
+    texts = re.findall(r'Email(?:Message|Subject): "?([^"\n]+)"?\n', T)
+    assert len(texts) == 4
+    assert all("\u3000" not in t and "\t" not in t for t in texts)
+    bodies = re.findall(r'EmailMessage: "([^"\n]+)"', T)
+    assert len(bodies) == 2 and all("{####}" in b for b in bodies)
+    assert any("{username}" in b for b in bodies)  # 招待メールには、ログインIDを入れる
