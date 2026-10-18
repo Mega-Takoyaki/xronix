@@ -107,12 +107,48 @@ class Diagnose:
                 v.append(f"投稿から{age:.1f}日たっています。返信の検索は、直近7日が対象です。")
             if directed:
                 v.append("次回のジョブの実行で取り込まれない場合は、Xのこの2つのAPIが、この投稿を返していません（Xの仕様や、返信の表示のフィルタ）。下の「取り込む」で、手動で取り込めます。")
+        if not out["own_post"] and not old:
+            cost += self._probe(out, token, tw, my_id, username, tid)
         if ingest and not old and not out["own_post"]:
             item = a.jobs.ingest_manual(tw)
             out["ingest_result"] = {"state": item.get("state") if item else "", "rule": (item or {}).get("rule_name", "")}
             v.append("手動で取り込みました。承認待ちか履歴に入っています。")
         self._done(out, reads, cost)
         return out
+
+    def _probe(self, out: dict, token: str, tw: dict, my_id: str, username: str, tid: str) -> float:
+        """この投稿が、Xの検索に出るかを調べる（狭い検索を2つ）。メンション一覧は、取得位置の関係で、ここでは調べられない。"""
+        a = self.app
+        age = (a.now() - snowflake_time(tid)).total_seconds() / 86400
+        out["probes"] = []
+        if age > SEARCH_WINDOW_DAYS:
+            out["verdict"].append("検索の確認: 投稿から7日以上たっているため、行いませんでした（検索は直近7日だけ）。")
+            return 0.0
+        queries = []
+        if username and tw.get("author_id"):
+            queries.append(("投稿者 × 自分宛て", f"from:{tw['author_id']} to:{username}"))
+        if tw.get("conversation_id"):
+            queries.append(("同じ会話", f"conversation_id:{tw['conversation_id']}"))
+        cost, hit, errors = 0.0, False, 0
+        for label, q in queries:
+            try:
+                r = a.x.search_recent(token, q, 10)
+                ids = [t["id"] for t in r["tweets"]]
+                out["reads"] += r["reads"]; cost += COST_OTHER_READ * r["reads"]
+                out["probes"].append({"label": label, "query": q, "count": len(ids), "contains": tid in ids})
+                hit = hit or tid in ids
+            except XError as e:
+                errors += 1
+                out["probes"].append({"label": label, "query": q, "error": str(e)})
+        v = out["verdict"]
+        if hit:
+            v.append("検索の確認: Xの検索には、この投稿が出ます。返信の検索（to:）の条件や、取得の周期に、改善の余地があります。")
+        elif queries and not errors:
+            v.append("検索の確認: どの検索にも、この投稿は出ませんでした。メンション一覧にも出ていないため、Xが、この投稿を、一覧と検索から外している可能性があります"
+                     "（スパム・品質のフィルタ、ブロック・ミュートの関係など。推測です）。アプリからは、自動で取得できません。必要なら、「取り込む」で、手動で取り込めます。")
+        elif errors:
+            v.append("検索の確認: 検索がエラーになりました。下の表のエラーを確認してください。")
+        return cost
 
     def posts(self) -> dict:
         """自分の投稿ごとの、Xが数える返信数・引用数と、取り込み済みの件数。差があれば、取りこぼしの目安。"""
