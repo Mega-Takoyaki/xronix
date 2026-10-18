@@ -12,7 +12,8 @@ DEFAULTS: dict[str, dict] = {
     },
     "job": {"enabled": False, "interval_minutes": 60, "jitter_minutes": 0, "initial_mode": "from_now", "max_pages": 3,
             "metrics_interval_minutes": 360, "metrics_window_days": 7, "metrics_max_posts": 20, "wide_fetch": True, "verbose_log": True},
-    "safety": {"kill_switch": False, "daily_limit": 10, "like_daily_limit": 20, "auto_daily_limit": 5},
+    "safety": {"kill_switch": False, "daily_limit": 10, "like_daily_limit": 20, "auto_daily_limit": 5,
+               "conversation_reply_limit": 3, "author_daily_limit": 5},
     "notify": {"telegram_enabled": False, "telegram_chat_id": "", "site_url": ""},
 }
 
@@ -22,7 +23,8 @@ SCHEMA: dict[str, dict[str, type]] = {
     "ai": {"provider": str, "bedrock_model": str, "bedrock_region": str, "openai_model": str, "openai_base_url": str},
     "job": {"enabled": bool, "interval_minutes": int, "jitter_minutes": int, "initial_mode": str, "max_pages": int,
             "metrics_interval_minutes": int, "metrics_window_days": int, "metrics_max_posts": int, "wide_fetch": bool, "verbose_log": bool},
-    "safety": {"kill_switch": bool, "daily_limit": int, "like_daily_limit": int, "auto_daily_limit": int},
+    "safety": {"kill_switch": bool, "daily_limit": int, "like_daily_limit": int, "auto_daily_limit": int,
+               "conversation_reply_limit": int, "author_daily_limit": int},
     "notify": {"telegram_enabled": bool, "telegram_chat_id": str, "site_url": str},
 }
 
@@ -99,6 +101,9 @@ class Settings:
             for k, label in (("daily_limit", "1日の送信上限"), ("like_daily_limit", "1日のいいね上限"), ("auto_daily_limit", "1日の自動送信の上限")):
                 if not 0 <= cur[k] <= 100:
                     raise ValidationError(f"{label}は0〜100で指定してください")
+            for k, label in (("conversation_reply_limit", "同じ相手との会話の返信上限"), ("author_daily_limit", "同じ相手への1日の返信上限")):
+                if not 1 <= cur[k] <= 50:
+                    raise ValidationError(f"{label}は1〜50で指定してください")
         if section == "ai":
             if not re.fullmatch(r"[a-z]{2}(-[a-z]+)+-\d", cur["bedrock_region"]):
                 raise ValidationError("Bedrockのリージョンは ap-northeast-1 のような形式で指定してください")

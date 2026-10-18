@@ -524,3 +524,59 @@ def test_conversation_search_failure_keeps_job_ok_and_retries_later(app):
     r = run(app)
     assert r["status"] == "ok" and any("返信の補完（会話の検索）に失敗" in l["message"] for l in app.repo.list("logs"))
     assert p["id"] not in (app.repo.get("state", "reply_counts") or {})   # 失敗したら、数を覚えない（次回、やり直す）
+
+
+# --- 会話が終わらなくなることを避ける上限 ---
+def _sent(app, mid, author="1000", conv="1800000000000000000", when=None):
+    from xronix.common import iso
+    app.repo.put("mentions", mid, {"id": mid, "author_id": author, "conversation_id": conv, "state": "sent", "kind": "reply_to_post",
+                                    "sent_at": when or iso(app.now()), "updated_at": when or iso(app.now())})
+
+
+def _last(app, state=None):
+    return [m for m in mentions(app, state) if m["id"].isdigit()][-1]
+
+
+def test_conversation_reply_limit_stops_drafts_for_same_person(app):
+    start(app)
+    app.settings.update("safety", {"conversation_reply_limit": 2, "author_daily_limit": 50})
+    _sent(app, "s1"); _sent(app, "s2")
+    add(app, "可愛い投稿ありがとうございます！", authors=["1000"])
+    r = run(app)
+    m = _last(app)
+    assert r["new"] == 1 and m["state"] == "done" and m["draft_text"] == "" and m["limit_reached"] is True
+    assert any("上限（2回）" in a["detail"] for a in m["actions"]) and r["drafted"] == 0
+    # 別の人には、返信案を作る
+    add(app, "可愛い投稿ありがとうございます！", authors=["2000"])
+    run(app)
+    assert _last(app, "pending")["author_id"] == "2000"
+
+
+def test_author_daily_limit_counts_across_conversations_and_resets_next_day(app, clock):
+    start(app)
+    app.settings.update("safety", {"conversation_reply_limit": 50, "author_daily_limit": 2})
+    _sent(app, "s1", conv="a"); _sent(app, "s2", conv="b")
+    add(app, "可愛い！ありがとうございます", authors=["1000"])
+    run(app)
+    assert _last(app)["limit_reached"] is True and any("今日の返信が上限" in a["detail"] for a in _last(app)["actions"])
+    clock.advance(minutes=60 * 30)  # 翌日（日本時間）になれば、数え直す
+    add(app, "可愛い！ありがとうございます", authors=["1000"])
+    run(app)
+    assert _last(app).get("limit_reached") is None and _last(app)["state"] == "pending"
+
+
+def test_limits_apply_to_auto_send_and_validate(app):
+    from xronix.settings import ValidationError
+    api = start(app)
+    for bad in (0, 51):
+        with pytest.raises(ValidationError):
+            app.settings.update("safety", {"conversation_reply_limit": bad})
+        with pytest.raises(ValidationError):
+            app.settings.update("safety", {"author_daily_limit": bad})
+    rule = app.rules.create({"name": "自動", "events": ["reply_to_post"], "categories": ["fan"], "actions": [{"type": "send_reply", "source": "template"}]})
+    app.settings.update("safety", {"conversation_reply_limit": 1})
+    _sent(app, "s1")
+    add(app, "可愛い投稿ありがとうございます！", authors=["1000"])
+    run(app)
+    assert app.x.sent == [] and _last(app)["limit_reached"] is True
+    assert rule["id"]

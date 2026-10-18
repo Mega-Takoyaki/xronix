@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .classify import FAN, LABELS as CATEGORY_LABELS, QUESTION
 from .common import iso, jst_date, utcnow
+from . import limits
 from .events import LABELS as EVENT_LABELS
 from .rules import ACTION_LABELS, REPLY_ACTIONS
 from .sender import SendRefused
@@ -129,6 +130,11 @@ class ActionEngine:
 
     def _reply(self, item: dict, a: dict, run: dict | None) -> dict:
         t = a["type"]
+        stop = limits.reached(self.repo, self.settings, self.now(), item)  # 会話が終わらなくなることを避ける（返信案も作らない）
+        if stop:
+            item.update(draft_text="", draft_template_id="", state="done", limit_reached=True)
+            self.log.info("action", stop, mention_id=item["id"])
+            return _res(t, True, stop)
         draft, tpl_id, why = self._draft(item, a, run)
         if run is not None and draft:
             run["drafted"] = run.get("drafted", 0) + 1
