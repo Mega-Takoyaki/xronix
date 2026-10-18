@@ -56,3 +56,9 @@ def test_viewport_blocks_auto_zoom_out_and_assets_are_not_cached():
         assert "minimum-scale=1" in (WEB / name).read_text(encoding="utf-8")
     wf = (WEB.parent / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     assert re.search(r"aws s3 sync web .* --cache-control \"no-cache\"", wf)
+
+
+def test_layout_diag_helper_is_opt_in():
+    """表示の診断は、URLに ?diag=1 を付けたときだけ動く（通常は何も出さない）"""
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    assert 'get("diag")' in js and "layoutDiag()" in js
