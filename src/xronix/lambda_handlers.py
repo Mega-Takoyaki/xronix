@@ -1,13 +1,13 @@
 """AWS Lambdaの入口。API Gateway(HTTP API v2)用と、EventBridge用の2つ。
 
-認証: 画面とAPIはBasic認証（資格情報のSHA-256を環境変数 XRONIX_BASIC_HASH に持つ）。
-未設定なら全拒否（設定漏れで公開されない）。Xの認可コールバックだけは認証なしで、stateで保護する。
+認証: ログイン（Cognito）で得たIDトークンを、API GatewayのJWT検証が確かめる。
+このLambdaでは、検証済みの印（requestContext.authorizer.jwt.claims）があるかを、もう一度確認する
+（認証の設定漏れで、公開されないようにするため）。メールアドレスが環境変数 XRONIX_ADMIN_EMAIL と違う場合も拒否する。
+認証なしで呼べるのは、Xの認可コールバック（stateで保護）と、ログイン画面が使う設定（公開してよい値だけ）。
 """
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import json
 import os
 
@@ -15,7 +15,7 @@ from .api import Api
 from .app import build_aws
 
 _api: Api | None = None
-PUBLIC_PATHS = {"/api/x/callback"}
+PUBLIC_PATHS = {"/api/x/callback", "/api/auth-config"}
 
 
 def _get_api() -> Api:
@@ -25,20 +25,16 @@ def _get_api() -> Api:
     return _api
 
 
-def basic_hash(user: str, password: str) -> str:
-    return hashlib.sha256(f"{user}:{password}".encode()).hexdigest()
+def _claims(event: dict) -> dict:
+    return (((event.get("requestContext") or {}).get("authorizer") or {}).get("jwt") or {}).get("claims") or {}
 
 
-def _authorized(headers: dict) -> bool:
-    expected = os.environ.get("XRONIX_BASIC_HASH", "")
-    value = headers.get("authorization", "")
-    if not expected or not value.startswith("Basic "):
+def _authorized(event: dict) -> bool:
+    claims = _claims(event)
+    if not claims.get("sub") or claims.get("token_use") != "id":
         return False
-    try:
-        decoded = base64.b64decode(value[6:], validate=True).decode("utf-8")
-    except (ValueError, UnicodeDecodeError):
-        return False
-    return hmac.compare_digest(hashlib.sha256(decoded.encode()).hexdigest(), expected)
+    expected = os.environ.get("XRONIX_ADMIN_EMAIL", "").strip().lower()
+    return not expected or str(claims.get("email", "")).strip().lower() == expected
 
 
 def _resp(status: int, payload: dict, headers: dict | None = None) -> dict:
@@ -51,8 +47,8 @@ def api_handler(event, context=None):
     method, path = http["method"], event["rawPath"]
     headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
     if path not in PUBLIC_PATHS:
-        if not _authorized(headers):
-            return _resp(401, {"error": "認証が必要です"}, {"WWW-Authenticate": 'Basic realm="XroniX", charset="UTF-8"'})
+        if not _authorized(event):
+            return _resp(401, {"error": "ログインが必要です"})
         # 他サイトからの書き込み（CSRF）を防ぐ。独自ヘッダーはブラウザが事前確認を要求するため、他サイトからは付けられない
         if method != "GET" and headers.get("x-requested-with") != "xronix":
             return _resp(403, {"error": "forbidden"})

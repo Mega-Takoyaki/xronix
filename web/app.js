@@ -21,12 +21,15 @@ function h(tag, attrs = {}, ...kids) {
 const tip = (text) => h("i", { class: "tip", tabindex: "0", "data-tip": text, "aria-label": text }, "ⓘ");
 const lbl = (text, tipText) => h("label", {}, text, tipText ? tip(tipText) : null);
 
-async function api(method, path, body) {
+async function api(method, path, body, retried = false) {
+  const auth = await XAuth.header();
+  if (auth === null) { XAuth.showLogin(); throw Object.assign(new Error("ログインが必要です。"), { status: 401 }); }
   const res = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json", "X-Requested-With": "xronix" },
+    headers: { "Content-Type": "application/json", "X-Requested-With": "xronix", ...auth },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  if (res.status === 401 && !retried && (await XAuth.recover())) return api(method, path, body, true);  // トークンの期限切れは、更新して1回だけ再試行する
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.error || `エラー（HTTP ${res.status}）`), { status: res.status });
   return data;
@@ -486,5 +489,8 @@ async function render() {
   } catch (e) { view.replaceChildren(h("div", { class: "empty err" }, e.message)); }
 }
 $("#tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { tab = b.dataset.tab; render(); } });
-refreshStatus().then(render);
-setInterval(refreshStatus, 30000);
+XAuth.ready().then(() => {
+  if (XAuth.enabled) { const b = $("#logout"); b.hidden = false; b.title = `${XAuth.email} をログアウトする`; b.addEventListener("click", () => XAuth.logout()); }
+  refreshStatus().then(render);
+  setInterval(refreshStatus, 30000);
+});

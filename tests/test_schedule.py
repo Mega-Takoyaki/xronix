@@ -186,14 +186,13 @@ def test_lambda_settings_change_registers_schedule_in_aws(monkeypatch):
         monkeypatch.setenv("XRONIX_SCHEDULER_ROLE_ARN", "arn:aws:iam::123456789012:role/xronix-staging-scheduler")
         monkeypatch.setenv("XRONIX_SCHEDULE_PREFIX", "xronix-staging")
         from xronix import lambda_handlers as lh
-        monkeypatch.setenv("XRONIX_BASIC_HASH", lh.basic_hash("u", "p"))
+        monkeypatch.setenv("XRONIX_ADMIN_EMAIL", "me@example.com")
         lh._api = None
-        import base64
-        auth = "Basic " + base64.b64encode(b"u:p").decode()
+        claims = {"sub": "s-1", "token_use": "id", "email": "me@example.com"}
 
         def put(body):
-            return lh.api_handler({"requestContext": {"http": {"method": "PUT"}}, "rawPath": "/api/settings/job", "queryStringParameters": None,
-                                   "headers": {"Authorization": auth, "X-Requested-With": "xronix"}, "body": json.dumps(body)})
+            return lh.api_handler({"requestContext": {"http": {"method": "PUT"}, "authorizer": {"jwt": {"claims": claims}}}, "rawPath": "/api/settings/job", "queryStringParameters": None,
+                                   "headers": {"X-Requested-With": "xronix"}, "body": json.dumps(body)})
 
         client = boto3.client("scheduler")
         assert put({"enabled": True, "interval_minutes": 30, "jitter_minutes": 3})["statusCode"] == 200

@@ -45,8 +45,7 @@ AWSの合計は月$0〜1程度。X APIの費用（月約$1〜2）は別である
    - `AWS_ROLE_ARN`: 上の `RoleArn`
    - `ARTIFACT_BUCKET`: 上の `ArtifactBucket`
 3. Environment secrets に次を登録する。
-   - `BASIC_AUTH_USER`: 任意のユーザー名
-   - `BASIC_AUTH_PASSWORD`: 20文字以上のランダムな文字列。Basic認証には試行回数の制限が無いため、長くすること
+   - `ADMIN_EMAIL`: ログインに使うメールアドレス（ログインIDを兼ねる）。公開リポジトリに書かないため、シークレットで渡す。未設定のままだと、デプロイは、画面に入れなくなることを避けるため、最初の段階で止まる
 4. 任意: 同じ画面の Required reviewers に自分を入れると、デプロイ前に承認ボタンが出る。
 
 ### 初回のデプロイ
@@ -97,9 +96,46 @@ AIは、メンションの分類に使います。返信文をAIで作るかど�
 ### Xの接続
 
 1. Xの開発者コンソールで、専用アプリのコールバックURLに、要約に出た `https://xxxx.cloudfront.net/api/x/callback` を追加する。
-2. 画面のURLを開き、Basic認証のユーザー名とパスワードを入力する。
+2. 画面のURLを開き、ログインする（下の「ログイン」を参照）。
 3. 設定で Client ID、コールバックURL（既定で入っている値）、Client Secret を保存し、「Xと接続」を押す。
 4. 通知や安全装置（1日の上限は既定で10件）を確認する。定期処理は既定で停止しているので、必要になったら有効にする。
+
+### ログイン
+
+1. 初回のデプロイで、`ADMIN_EMAIL` のアドレスに、Cognitoから「XroniX の初回ログイン」のメール（仮パスワード入り）が届く。送信元は Cognito の既定のアドレスで、迷惑メールに入ることがある。
+2. 画面のURLを開き、メールアドレスと仮パスワードでログインする。続けて、新しいパスワード（12文字以上、英大文字・英小文字・数字を含む）を設定する。
+3. 以後は、メールアドレスと新しいパスワードでログインする。ログイン状態は、このブラウザに30日まで保たれる（右上の「ログアウト」で消える）。
+4. パスワードを忘れたときは、ログイン画面の「パスワードを忘れた場合」を押す。メールに確認コード（6桁）が届くので、コードと新しいパスワードを入力する。
+5. 仮パスワードは7日で無効になる。初回のログインをしないまま過ぎた場合は、下の手順で設定し直す。
+
+### ログインできないとき（CloudShell）
+
+画面に入れない場合の復旧用。AWSの権限で、直接パスワードを設定する。
+
+```bash
+POOL=$(aws cloudformation describe-stacks --stack-name xronix-staging --region ap-northeast-1 \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)
+EMAIL=$(aws cloudformation describe-stacks --stack-name xronix-staging --region ap-northeast-1 \
+  --query "Stacks[0].Parameters[?ParameterKey=='AdminEmail'].ParameterValue" --output text)
+# 新しいパスワードを、直接設定する（12文字以上、英大文字・英小文字・数字を含む）
+aws cognito-idp admin-set-user-password --region ap-northeast-1 --user-pool-id "$POOL" \
+  --username "$EMAIL" --password '新しいパスワード' --permanent
+```
+
+### 認証の導入時（Basic認証からの切り替え）に必要な作業
+
+次の2つを、先に済ませてからデプロイする。
+
+1. GitHubの Environment secrets に `ADMIN_EMAIL` を登録する（上のGitHub側の手順3）。不要になった `BASIC_AUTH_USER`・`BASIC_AUTH_PASSWORD` は削除してよい。
+2. 事前準備のスタックを更新し、デプロイ用ロールにCognitoの権限を足す（CloudShellで、リポジトリの `infra/bootstrap.yaml` を使う）。
+
+```bash
+aws cloudformation update-stack --region ap-northeast-1 --stack-name xronix-bootstrap \
+  --template-body file://bootstrap.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --parameters ParameterKey=GitHubSubject,UsePreviousValue=true ParameterKey=CreateOidcProvider,UsePreviousValue=true \
+               ParameterKey=EnvironmentName,UsePreviousValue=true ParameterKey=StackPrefix,UsePreviousValue=true
+aws cloudformation wait stack-update-complete --region ap-northeast-1 --stack-name xronix-bootstrap
+```
 
 ## 以後の運用
 
@@ -108,13 +144,13 @@ AIは、メンションの分類に使います。返信文をAIで作るかど�
 | コードを直して反映する | mainへ取り込む。自動でテストとデプロイが走る |
 | 失敗したとき | Actionsのログを見る。CloudFormationは失敗時に自動で元に戻る |
 | 画面だけ急いで直す | 同じ（画面もワークフローが配信する） |
-| パスワードを変える | GitHubの `BASIC_AUTH_PASSWORD` を更新して、ワークフローを再実行する |
+| パスワードを変える・忘れた | ログイン画面の「パスワードを忘れた場合」から、メールの確認コードで再設定する |
+| ログインできなくなった | 下の「ログインできないとき」の手順（CloudShell）で、パスワードを設定し直す |
 | 止める | 画面の「緊急停止」。または定期処理を無効にする（次回の予定も取り消される） |
 | 全部消す | CloudFormationで `xronix-staging` を削除する。S3は空にしてから。SSMの `/xronix/*` は手動で削除する |
 
 ## 注意
 
 - OIDCトークンの `sub` は、このリポジトリではIDを含む形式（`repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:staging`）だった。`infra/bootstrap.yaml` のパラメータ `GitHubSubject` で指定する。通常の形式（`repo:組織/リポジトリ:environment:...`）を前提にすると、`Not authorized to perform sts:AssumeRoleWithWebIdentity` で失敗する。
-- Basic認証の資格情報のハッシュは、CloudFormationのパラメータ（値は伏せる）と、CloudFront FunctionのコードとLambdaの環境変数に入る。AWSコンソールに入れる人には見える。1人用の検証環境として許容している。
-- 認証の強度は、パスワードの長さに依存する。公開して長く運用する段階では、Cognitoなどへ置き換える（ADR-0004）。
+- ログインは Amazon Cognito（ADR-0017）。パスワードは Cognito が保管し、このアプリは持たない。ログイン用のメールアドレスは、CloudFormationのパラメータとLambdaの環境変数に入る（AWSコンソールに入れる人には見える）。
 - デプロイ用ロールの権限は、スタック名の接頭辞 `xronix-` のIAMロールとS3バケットに絞っているが、Lambda・DynamoDB・CloudFront等はリソースを限定していない。実機では未検証であり、足りない権限があればデプロイ時に拒否される。

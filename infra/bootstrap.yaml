@@ -86,7 +86,7 @@ Resources:
                 Resource: "*"
               - Sid: Services
                 Effect: Allow
-                Action: [lambda:*, apigateway:*, dynamodb:*, logs:*, scheduler:*, events:*, cloudfront:*]
+                Action: [lambda:*, apigateway:*, dynamodb:*, logs:*, scheduler:*, events:*, cloudfront:*, cognito-idp:*]
                 Resource: "*"
               - Sid: Buckets
                 Effect: Allow
