@@ -92,7 +92,7 @@ function mentionCard(m, queue) {
   const head = h("div", { class: "row" },
     m.metric ? null : h("span", { class: `tag ${m.category}` }, m.label), h("span", { class: "tag" }, STATE[m.state] || m.state),
     m.kind_label ? h("span", { class: "tag" }, m.kind_label) : null,
-    h("span", { class: "muted grow" }, m.metric ? `${m.metric.label} ${m.metric.value}件（基準 ${m.metric.threshold}件）・ ${fmt(m.fetched_at)}` : `ユーザーID ${m.author_id} ・ ${fmt(m.created_at || m.fetched_at)}`),
+    h("span", { class: "muted grow" }, m.metric ? `${m.metric.label} ${m.metric.value}件（基準 ${m.metric.threshold}件）・ ${fmt(m.fetched_at)}` : `ユーザーID ${m.author_id} ・ ${fmt(m.created_at || m.fetched_at)}${m.source ? ` ・ 取得元: ${m.source}` : ""}`),
     h("a", { href: `https://x.com/i/web/status/${m.target_tweet_id || m.id}`, target: "_blank", rel: "noopener noreferrer" }, "Xで開く"),
   );
   card.append(head, h("div", { class: "muted" }, m.metric ? "あなたの投稿" : null), h("div", { class: "quote" }, m.text), actionsView(m));
@@ -184,6 +184,7 @@ async function renderJobs() {
   const mDays = h("input", { type: "number", min: 1, max: 30 }); mDays.value = s.metrics_window_days;
   const mMax = h("input", { type: "number", min: 5, max: 100 }); mMax.value = s.metrics_max_posts;
   const wide = h("input", { type: "checkbox", checked: s.wide_fetch });
+  const verbose = h("input", { type: "checkbox", checked: s.verbose_log });
   const initial = h("select", {}, [["from_now", "現在地点から始める（過去分は取り込まない）"], ["backfill", "過去のメンションも取り込む"]].map(([v, t]) => h("option", { value: v, selected: v === s.initial_mode }, t)));
   const preview = h("div", { class: "muted" });
   const updatePreview = () => {
@@ -204,6 +205,7 @@ async function renderJobs() {
       h("div", { class: "grow" }, lbl("1回の最大ページ数", "1ページは最大100件です。新着が多いときの上限で、残りは次回に取得します。"), pages),
       h("div", { class: "grow" }, lbl("初回の動作", "初回の実行だけに使います。現在地点から始めると、過去のメンションへの返信案は作られません。"), initial)),
     h("label", { class: "inline", style: "margin-top:10px" }, wide, "取得範囲を広げる（自分の@が無い返信と、引用も取る）", tip("メンション一覧には、自分の@が無い返信や、引用が出ません。オンにすると、検索で自分宛ての返信を補い、引用が増えた自分の投稿だけ引用を取りに行きます。ルールで「自分の投稿への返信」「自分の返信への返信」「自分の投稿の引用」を使うときに必要です。他人の投稿の読み取りになり、約$0.005／件がかかります。")),
+    h("label", { class: "inline", style: "margin-top:6px" }, verbose, "詳細ログを残す", tip("ジョブの各段階を、統計・ログに「詳細」として記録します（取得件数、取得位置、取り込んだ／スキップした理由、使ったルールなど）。投稿の本文は記録しません。7日で削除されます。取りこぼしの調査に使います。")),
     h("h3", { style: "margin-top:14px" }, "自投稿の数値の確認", tip("「いいね数が基準以上」などのルールがあるときだけ、自分の投稿を読みに行きます。読み取りは1投稿あたり約$0.001です。例: 6時間ごとに20投稿なら、1日約$0.08です。")),
     h("div", { class: "row" },
       h("div", { class: "grow" }, lbl("確認の間隔（分）", "5〜1440分。定期処理の間隔とは別に、この間隔ごとに確認します。"), mInt),
@@ -211,7 +213,7 @@ async function renderJobs() {
       h("div", { class: "grow" }, lbl("見る投稿の最大数", "5〜100件。多いほど、読み取り料金が増えます。"), mMax)),
     h("div", { class: "row end", style: "margin-top:12px" },
       h("button", { onclick: async () => {
-        await act(() => api("PUT", "/api/settings/job", { enabled: enabled.checked, interval_minutes: Number(interval.value), jitter_minutes: Number(jitter.value), max_pages: Number(pages.value), initial_mode: initial.value, wide_fetch: wide.checked,
+        await act(() => api("PUT", "/api/settings/job", { enabled: enabled.checked, interval_minutes: Number(interval.value), jitter_minutes: Number(jitter.value), max_pages: Number(pages.value), initial_mode: initial.value, wide_fetch: wide.checked, verbose_log: verbose.checked,
           metrics_interval_minutes: Number(mInt.value), metrics_window_days: Number(mDays.value), metrics_max_posts: Number(mMax.value) }), "保存しました");
         await refreshStatus(); renderJobs();
       } }, "保存"),
@@ -252,11 +254,11 @@ async function renderStats() {
     h("div", { class: "legend" }, h("span", {}, "受信"), h("span", { class: "s" }, "送信")));
   const cats = h("div", { class: "card" }, h("h3", {}, "分類の内訳"), s.by_category.length ? h("table", {}, s.by_category.map((c) => h("tr", {}, h("td", {}, c.label), h("td", {}, c.count)))) : h("div", { class: "muted" }, "データがありません"));
   const lvl = h("select", { onchange: async (e) => { const r = await api("GET", `/api/logs?level=${e.target.value}`); fill(r.items); } },
-    [["", "すべて"], ["info", "情報"], ["warn", "警告"], ["error", "エラー"]].map(([v, t]) => h("option", { value: v }, t)));
+    [["", "情報・警告・エラー"], ["all", "詳細も含めてすべて"], ["warn", "警告"], ["error", "エラー"], ["debug", "詳細のみ"]].map(([v, t]) => h("option", { value: v }, t)));
   const tbody = h("tbody");
-  const fill = (items) => tbody.replaceChildren(...items.map((r) => h("tr", {}, h("td", {}, fmt(r.ts)), h("td", { class: r.level === "error" ? "err" : r.level === "warn" ? "warn" : "" }, { info: "情報", warn: "警告", error: "エラー" }[r.level]), h("td", {}, KIND[r.kind] || r.kind), h("td", {}, r.message))));
+  const fill = (items) => tbody.replaceChildren(...items.map((r) => h("tr", {}, h("td", {}, fmt(r.ts)), h("td", { class: r.level === "error" ? "err" : r.level === "warn" ? "warn" : r.level === "debug" ? "muted" : "" }, { debug: "詳細", info: "情報", warn: "警告", error: "エラー" }[r.level]), h("td", {}, KIND[r.kind] || r.kind), h("td", { class: r.level === "debug" ? "muted" : "", style: "white-space:pre-wrap;word-break:break-all" }, r.message))));
   fill(l.items);
-  const logs = h("div", { class: "card" }, h("div", { class: "row" }, h("h3", { class: "grow" }, "ログ", tip("操作とジョブの記録です。60日で自動的に削除されます。トークンや返信の本文は記録しません。")), lvl),
+  const logs = h("div", { class: "card" }, h("div", { class: "row" }, h("h3", { class: "grow" }, "ログ", tip("操作とジョブの記録です。「詳細」は、ジョブの各段階（何件取れたか、なぜ取り込まなかったか）の記録で、7日で削除されます。それ以外は60日で削除されます。トークンや投稿の本文は記録しません。")), lvl),
     h("table", {}, h("thead", {}, h("tr", {}, ["日時", "レベル", "種類", "内容"].map((c) => h("th", {}, c)))), tbody));
   view.replaceChildren(tiles, bars, cats, logs);
 }
