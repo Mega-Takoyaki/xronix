@@ -38,3 +38,13 @@ def test_toasts_at_top():
     assert "bottom" not in re.search(r"#toasts\{[^}]*\}", css).group(0)
     for lv in ("success", "info", "warn", "error"):
         assert f".toast.{lv}" in css
+
+
+def test_mobile_layout_rules_exist():
+    """スマホで横にはみ出さない: ⓘの説明は画面内に配置し（固定位置）、表は横にスクロールさせる"""
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    assert "overflow-x:hidden" in css and ".tip.on::after{display:block}" in css
+    assert "position:fixed" in re.search(r"\.tip::after\{[^}]*\}", css).group(0)
+    assert re.search(r"@media \(max-width:640px\)\{[^}]*table\{display:block;overflow-x:auto", css, re.S)
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "--tip-left" in js and "document.documentElement.clientWidth" in js

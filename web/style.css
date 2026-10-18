@@ -36,8 +36,8 @@ textarea{min-height:76px;resize:vertical}
 label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
 label.inline{display:inline-flex;gap:6px;align-items:center;margin:0;color:var(--text);font-size:15px}
 .tip{display:inline-block;position:relative;cursor:help;color:var(--muted);margin-left:4px;font-style:normal}
-.tip::after{content:attr(data-tip);position:absolute;left:50%;bottom:130%;transform:translateX(-50%);width:max-content;max-width:280px;white-space:normal;text-align:left;background:#111827;color:#f3f4f6;border-radius:8px;padding:8px 10px;font-size:12.5px;line-height:1.5;opacity:0;pointer-events:none;z-index:10;transition:opacity .1s}
-.tip:hover::after,.tip:focus::after{opacity:1}
+.tip::after{content:attr(data-tip);display:none;position:fixed;left:var(--tip-left,8px);top:var(--tip-top,auto);bottom:var(--tip-bottom,auto);width:max-content;max-width:min(280px,calc(100vw - 16px));white-space:normal;text-align:left;background:#111827;color:#f3f4f6;border-radius:8px;padding:8px 10px;font-size:12.5px;line-height:1.5;pointer-events:none;z-index:60}
+.tip.on::after{display:block}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:500}
@@ -82,3 +82,14 @@ body.logged-out>header,body.logged-out>#banner,body.logged-out>nav,body.logged-o
 .login-msg{min-height:20px;font-size:13px;color:var(--danger)}
 .login-msg.ok{color:var(--ok)}
 button.logout{margin-left:4px}
+
+/* スマホ: 画面の横幅を超えないようにする */
+html,body{max-width:100%;overflow-x:hidden}
+main,.card,.row>*{min-width:0}
+@media (max-width:640px){
+  table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  header{padding:8px 12px}
+  main{padding:12px}
+  .card{padding:12px}
+  .row>.grow{flex:1 1 200px}  /* 入力欄が細くなりすぎないよう、足りなければ折り返す */
+}

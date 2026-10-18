@@ -19,6 +19,23 @@ function h(tag, attrs = {}, ...kids) {
   return el;
 }
 const tip = (text) => h("i", { class: "tip", tabindex: "0", "data-tip": text, "aria-label": text }, "ⓘ");
+// ⓘの説明: 画面の端で切れないよう、位置を計算して表示する（マウスのホバー、キーボードのフォーカス、スマホのタップ）
+{
+  const place = (el) => {
+    const r = el.getBoundingClientRect(), vw = document.documentElement.clientWidth, w = Math.min(280, vw - 16);
+    el.style.setProperty("--tip-left", `${Math.max(8, Math.min(vw - w - 8, r.left + r.width / 2 - w / 2))}px`);
+    if (r.top > 150) { el.style.setProperty("--tip-bottom", `${window.innerHeight - r.top + 6}px`); el.style.setProperty("--tip-top", "auto"); }
+    else { el.style.setProperty("--tip-top", `${r.bottom + 6}px`); el.style.setProperty("--tip-bottom", "auto"); }
+  };
+  const hide = () => document.querySelectorAll(".tip.on").forEach((e) => e.classList.remove("on"));
+  const show = (el) => { hide(); place(el); el.classList.add("on"); el.dataset.at = String(Date.now()); };
+  document.addEventListener("mouseover", (e) => { const t = e.target.closest && e.target.closest(".tip"); if (t) show(t); });
+  document.addEventListener("mouseout", (e) => { if (e.target.closest && e.target.closest(".tip")) hide(); });
+  document.addEventListener("focusin", (e) => { const t = e.target.closest && e.target.closest(".tip"); if (t) show(t); });
+  document.addEventListener("focusout", hide);
+  document.addEventListener("click", (e) => { const t = e.target.closest && e.target.closest(".tip"); if (t) { e.preventDefault(); e.stopPropagation(); if (t.classList.contains("on") && Date.now() - Number(t.dataset.at || 0) > 600) hide(); else if (!t.classList.contains("on")) show(t); } else hide(); }, true);  // タップでは、マウスのイベントと続けて起きるため、直後のクリックでは閉じない
+  window.addEventListener("scroll", hide, { passive: true });
+}
 const lbl = (text, tipText) => h("label", {}, text, tipText ? tip(tipText) : null);
 
 async function api(method, path, body, retried = false) {
