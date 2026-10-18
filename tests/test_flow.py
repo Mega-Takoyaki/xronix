@@ -369,3 +369,76 @@ def test_reply_cursor_is_never_zero(app):
     r = run(app)
     cur = app.repo.get("state", "reply_cursor")
     assert r["status"] == "ok" and cur is not None and cur["since_id"] != "0"
+
+
+# --- 取得の診断 ---
+def _tweet(app, tid, **kw):
+    t = {"id": tid, "author_id": "800", "text": "テスト返信です", "conversation_id": "1", "created_at": "2026-10-16T10:00:00.000Z", **kw}
+    app.x.tweets_db[tid] = t
+    return t
+
+
+def test_parse_tweet_id():
+    from xronix.diagnose import parse_tweet_id
+    from xronix.settings import ValidationError
+    assert parse_tweet_id("https://x.com/someone/status/2111043933341949959?s=46&t=abc") == "2111043933341949959"
+    assert parse_tweet_id(" 2111043933341949959 ") == "2111043933341949959"
+    for bad in ("", "abc", "https://example.com/"):
+        with pytest.raises(ValidationError):
+            parse_tweet_id(bad)
+
+
+def test_diagnose_reply_to_other_user_is_out_of_scope(app):
+    api = start(app)
+    _tweet(app, "2111043933341949959", in_reply_to_user_id="12345", referenced_tweets=[{"type": "replied_to", "id": "2111000000000000000"}])
+    _tweet(app, "2111000000000000000", author_id="12345")
+    st, d = api.handle("POST", "/api/diagnose/tweet", {}, {"input": "https://x.com/a/status/2111043933341949959?s=46"})[:2]
+    assert st == 200 and d["found"] and d["kind"] == "mention" and d["directed_at_me"] is False and d["mentions_me"] is False
+    assert d["parent"]["by_me"] is False and d["reads"] == 2
+    assert any("返信先が自分ではありません" in x and "対象外" in x for x in d["verdict"])
+    assert d["ingested"] is None and mentions(app) == []        # 診断だけでは、取り込まない
+    assert any("取得の診断" in l["message"] for l in app.repo.list("logs"))
+
+
+def test_diagnose_reply_to_me_and_manual_ingest(app):
+    api = start(app)
+    _tweet(app, "2111043933341949960", in_reply_to_user_id="9999", referenced_tweets=[{"type": "replied_to", "id": "1"}])
+    _tweet(app, "1", author_id="9999")
+    _, d = api.handle("POST", "/api/diagnose/tweet", {}, {"input": "2111043933341949960"})[:2]
+    assert d["directed_at_me"] is True and d["kind"] == "reply_to_post" and d["mentions_me"] is False
+    assert any("返信先は、自分です" in x for x in d["verdict"]) and any("返信の検索（to:）だけ" in x for x in d["verdict"])
+    _, d2 = api.handle("POST", "/api/diagnose/tweet", {}, {"input": "2111043933341949960", "ingest": True})[:2]
+    assert d2["ingest_result"]["state"] and mentions(app)[0]["source"] == "手動の取り込み（診断）"
+    _, d3 = api.handle("POST", "/api/diagnose/tweet", {}, {"input": "2111043933341949960"})[:2]
+    assert d3["ingested"]["source"] == "手動の取り込み（診断）" and any("取り込み済み" in x for x in d3["verdict"])
+
+
+def test_diagnose_missing_tweet_and_errors(app):
+    api = start(app)
+    _, d = api.handle("POST", "/api/diagnose/tweet", {}, {"input": "2111043933341949999"})[:2]
+    assert d["found"] is False and "返しませんでした" in d["verdict"][0]
+    assert api.handle("POST", "/api/diagnose/tweet", {}, {"input": "nope"})[0] == 400
+
+
+def test_diagnose_posts_compares_x_counts_with_ingested(app):
+    api = start(app)
+    p = app.x.add_post("自分の投稿", quotes=2)
+    p["public_metrics"]["reply_count"] = 3
+    app.repo.put("mentions", "r1", {"id": "r1", "kind": "reply_to_post", "conversation_id": p["id"], "parent_id": p["id"], "state": "done"})
+    st, d = api.handle("POST", "/api/diagnose/posts", {}, {})[:2]
+    row = d["posts"][0]
+    assert st == 200 and (row["x_replies"], row["got_replies"], row["x_quotes"], row["got_quotes"]) == (3, 1, 2, 0)
+
+
+def test_diagnose_requires_connection(app):
+    st, body = Api(app).handle("POST", "/api/diagnose/tweet", {}, {"input": "2111043933341949959"})[:2]
+    assert st == 502 and "接続されていません" in body["error"]
+
+
+def test_verbose_log_lists_own_posts_with_x_counts(app):
+    start(app)
+    p = app.x.add_post("自分の投稿", quotes=1)
+    p["public_metrics"]["reply_count"] = 4
+    r = run(app)
+    text = "\n".join(l["message"] for l in app.repo.list("logs") if l["level"] == "debug" and l["extra"].get("run_id") == r["id"])
+    assert f"自投稿 {p['id']}" in text and "Xの数 返信4・引用1" in text and "取り込み済み 返信0・引用0" in text

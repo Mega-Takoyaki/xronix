@@ -73,6 +73,8 @@ class Api:
             ("GET", r"/api/jobs", self.jobs),
             ("POST", r"/api/jobs/run", self.run_job),
             ("POST", r"/api/jobs/reset-cursor", self.reset_cursor),
+            ("POST", r"/api/diagnose/tweet", self.diagnose_tweet),
+            ("POST", r"/api/diagnose/posts", self.diagnose_posts),
             ("GET", r"/api/stats", self.stats),
             ("GET", r"/api/logs", self.logs),
             ("POST", r"/api/dev/mock-mentions", self.mock_mentions),
@@ -391,6 +393,14 @@ class Api:
         return _ok({"settings": a.settings.get("job"), "state": a.jobs.state(), "next_due": a.jobs.next_due(),
                     "cursor_set": bool(a.repo.get("state", "cursor")),
                     "runs": a.repo.list("runs", limit=30, reverse=True)})
+
+    def diagnose_tweet(self, q, b) -> Result:
+        from .diagnose import Diagnose
+        return _ok(Diagnose(self.app).tweet(str(b.get("input", "")), ingest=bool(b.get("ingest"))))
+
+    def diagnose_posts(self, q, b) -> Result:
+        from .diagnose import Diagnose
+        return _ok(Diagnose(self.app).posts())
 
     def reset_cursor(self, q, b) -> Result:
         """取得位置を消し、次の実行を「初回」として扱う。履歴・統計・取り込み済みの反応は消さない。"""
