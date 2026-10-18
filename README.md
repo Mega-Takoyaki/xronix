@@ -16,7 +16,7 @@ MVPをローカルで動かせる（モックモード）。AWSの検証環境�
 | ログ・統計（日別、分類別、概算費用） | ローカルで確認済み |
 | X接続（OAuth2＋PKCE）、AI接続（Bedrock既定／OpenAI）、Telegram通知 | 単体テスト（偽のHTTP・偽のBedrock）のみ。実機は未確認 |
 | DynamoDB／SSMの実装、Lambda入口 | motoでテスト済み。実AWSは未確認 |
-| SAMテンプレート（`template.yaml`）、事前準備（`infra/bootstrap.yaml`）、自動デプロイ（`.github/workflows/deploy.yml`） | lint・ビルド・Basic認証のロジックのテストまで。実AWSへのデプロイは未実施 |
+| SAMテンプレート（`template.yaml`）、事前準備（`infra/bootstrap.yaml`）、自動デプロイ（`.github/workflows/deploy.yml`） | lint・ビルド・ログイン（Cognito）の検証ロジックのテストまで。実AWSへのデプロイは未実施 |
 
 ## ローカルで動かす
 

@@ -2,7 +2,7 @@ name: deploy-staging
 
 # mainへのpushで、テスト → 検証環境へデプロイ → 動作確認 まで自動で行う。
 # GitHubの Environment「staging」に、変数 AWS_ROLE_ARN・ARTIFACT_BUCKET と、
-# シークレット BASIC_AUTH_USER・BASIC_AUTH_PASSWORD を設定しておくこと（docs/guide/aws-staging-setup.md）。
+# シークレット ADMIN_EMAIL（ログインに使うメールアドレス。リポジトリには書かない）を設定しておくこと（docs/guide/aws-staging-setup.md）。
 on:
   push:
     branches: [main]
@@ -53,30 +53,27 @@ jobs:
         with:
           use-installer: true
 
-      - name: Basic認証のハッシュを作る
-        id: auth
+      - name: ログイン用のメールアドレスを確認する
         env:
-          BASIC_AUTH_USER: ${{ secrets.BASIC_AUTH_USER }}
-          BASIC_AUTH_PASSWORD: ${{ secrets.BASIC_AUTH_PASSWORD }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
         run: |
-          test -n "$BASIC_AUTH_USER" && test -n "$BASIC_AUTH_PASSWORD" || { echo "BASIC_AUTH_USER / BASIC_AUTH_PASSWORD が未設定です"; exit 1; }
-          HASH=$(printf '%s:%s' "$BASIC_AUTH_USER" "$BASIC_AUTH_PASSWORD" | sha256sum | cut -d' ' -f1)
-          echo "::add-mask::$HASH"
-          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          # 未設定のままデプロイすると、ログインできるユーザーが作られず、画面に入れなくなる。その前に止める
+          test -n "$ADMIN_EMAIL" || { echo "::error::シークレット ADMIN_EMAIL が未設定です（ログインに使うメールアドレス）"; exit 1; }
+          echo "::add-mask::$ADMIN_EMAIL"
 
       - run: sam build
 
       - name: デプロイ
         env:
           ARTIFACT_BUCKET: ${{ vars.ARTIFACT_BUCKET }}
-          HASH: ${{ steps.auth.outputs.hash }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
         run: |
           sam deploy \
             --stack-name "$STACK" \
             --s3-bucket "$ARTIFACT_BUCKET" --s3-prefix "$STACK" \
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
             --no-confirm-changeset --no-fail-on-empty-changeset \
-            --parameter-overrides "BasicAuthHash=$HASH"
+            --parameter-overrides "AdminEmail=$ADMIN_EMAIL"
 
       - name: スタックの出力を読む
         id: out
@@ -92,19 +89,18 @@ jobs:
       - name: 動作確認
         env:
           SITE: ${{ steps.out.outputs.site }}
-          U: ${{ secrets.BASIC_AUTH_USER }}
-          P: ${{ secrets.BASIC_AUTH_PASSWORD }}
         run: |
           code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-          for i in 1 2 3 4 5 6; do [ "$(code "$SITE/")" = "401" ] && break; sleep 10; done
-          echo "認証なし（画面）:     $(code "$SITE/")      期待: 401"
-          echo "認証なし（API）:      $(code "$SITE/api/status") 期待: 401"
-          echo "認証あり（画面）:     $(code -u "$U:$P" "$SITE/")      期待: 200"
-          [ "$(code "$SITE/")" = "401" ]
+          for i in 1 2 3 4 5 6; do [ "$(code "$SITE/api/status")" = "401" ] && break; sleep 10; done
+          echo "ログインなし（API）:       $(code "$SITE/api/status")   期待: 401"
+          echo "ログインなし（POST）:      $(code -X POST -H 'X-Requested-With: xronix' "$SITE/api/kill")   期待: 401"
+          echo "ログイン画面:             $(code "$SITE/")   期待: 200"
+          echo "ログイン設定（公開）:      $(code "$SITE/api/auth-config")   期待: 200"
           [ "$(code "$SITE/api/status")" = "401" ]
-          [ "$(code -u "$U:$P" "$SITE/")" = "200" ]
-          curl -sf -u "$U:$P" "$SITE/api/status" | tee /tmp/status.json
-          python3 -c 'import json; d=json.load(open("/tmp/status.json")); assert d["mode"]=="live" and d["kill_switch"] is False, d'
+          [ "$(code -X POST -H 'X-Requested-With: xronix' "$SITE/api/kill")" = "401" ]
+          [ "$(code "$SITE/")" = "200" ]
+          curl -sf "$SITE/api/auth-config" | tee /tmp/authcfg.json
+          python3 -c 'import json; d=json.load(open("/tmp/authcfg.json")); assert d["enabled"] and d["client_id"] and d["region"], d'
 
       - name: 結果の要約
         run: |

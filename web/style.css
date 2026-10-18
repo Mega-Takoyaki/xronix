@@ -68,3 +68,17 @@ th{color:var(--muted);font-weight:500}
 .iconlink{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;border:1px solid var(--line);color:var(--text);text-decoration:none;background:var(--card)}
 .iconlink:hover,.iconlink:focus-visible{border-color:var(--accent);color:var(--accent)}
 .manual-hint{text-align:right;font-size:13px;min-height:20px;margin-bottom:4px}
+
+/* ログイン画面 */
+.login{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto}
+.login[hidden]{display:none}
+body.logged-out>header,body.logged-out>#banner,body.logged-out>nav,body.logged-out>main{display:none}
+.login-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;width:min(420px,100%);display:flex;flex-direction:column;gap:12px;box-shadow:0 4px 18px rgba(0,0,0,.06)}
+.login-card h1{font-size:18px;margin:0}
+.login-card label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.login-card .login-brand{font-weight:700;font-size:20px}
+.login-card .muted{margin:0;font-size:13px}
+.login-link{font-size:13px;align-self:flex-start}
+.login-msg{min-height:20px;font-size:13px;color:var(--danger)}
+.login-msg.ok{color:var(--ok)}
+button.logout{margin-left:4px}

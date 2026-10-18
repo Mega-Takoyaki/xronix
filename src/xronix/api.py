@@ -1,6 +1,7 @@
 """APIルーター。ローカルサーバとLambdaの両方から同じ関数を呼ぶ。認証は呼び出し側（Cognito／ローカル限定）の責務。"""
 from __future__ import annotations
 
+import os
 import re
 from datetime import timedelta
 
@@ -68,6 +69,7 @@ class Api:
             ("GET", r"/api/blocklist", self.list_block),
             ("POST", r"/api/blocklist", self.add_block),
             ("DELETE", r"/api/blocklist/(?P<id>\w+)", self.del_block),
+            ("GET", r"/api/auth-config", self.auth_config),
             ("GET", r"/api/jobs", self.jobs),
             ("POST", r"/api/jobs/run", self.run_job),
             ("POST", r"/api/jobs/reset-cursor", self.reset_cursor),
@@ -376,6 +378,12 @@ class Api:
     def del_block(self, q, b, id) -> Result:
         self.app.repo.delete("blocklist", id)
         return _ok()
+
+    # --- ログインの設定（認証なしで返す。公開してよい値だけ） ---
+    def auth_config(self, q, b) -> Result:
+        client_id = os.environ.get("XRONIX_COGNITO_CLIENT_ID", "")
+        region = os.environ.get("AWS_REGION", "") or os.environ.get("AWS_DEFAULT_REGION", "")
+        return _ok({"enabled": bool(client_id and region), "region": region, "client_id": client_id})
 
     # --- ジョブ ---
     def jobs(self, q, b) -> Result:

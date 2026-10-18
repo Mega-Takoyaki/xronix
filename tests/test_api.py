@@ -272,9 +272,7 @@ def test_telegram_test_endpoint_reports_reason(app):
 # --- Lambdaアダプタ（DynamoDB・SSMはmoto） ---
 import base64
 
-
-def basic(user="u", pw="p"):
-    return "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
+OK = {"sub": "s-1", "token_use": "id", "email": "Me@Example.com"}  # API GatewayのJWT検証を通ったIDトークンの内容
 
 
 def lambda_env(monkeypatch):
@@ -286,59 +284,74 @@ def lambda_env(monkeypatch):
         AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}],
         KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}])
     monkeypatch.setenv("XRONIX_TABLE", "xt")
+    monkeypatch.setenv("XRONIX_ADMIN_EMAIL", "me@example.com")
     from xronix import lambda_handlers as lh
-    monkeypatch.setenv("XRONIX_BASIC_HASH", lh.basic_hash("u", "p"))
     lh._api = None
     return lh
 
 
-def ev(method, path, body=None, query=None, auth=None, csrf=True):
+def ev(method, path, body=None, query=None, claims=None, csrf=True):
     headers = {}
-    if auth:
-        headers["Authorization"] = auth
     if csrf and method != "GET":
         headers["X-Requested-With"] = "xronix"
-    return {"requestContext": {"http": {"method": method}}, "rawPath": path, "queryStringParameters": query,
-            "headers": headers, "body": json.dumps(body) if body else None}
+    ctx = {"http": {"method": method}}
+    req = {"requestContext": ctx, "rawPath": path, "queryStringParameters": query, "headers": headers, "body": json.dumps(body) if body else None}
+    if claims is not None:
+        ctx["authorizer"] = {"jwt": {"claims": claims}}
+    return req
 
 
-def test_lambda_basic_auth_rules(monkeypatch):
+def test_lambda_requires_verified_login(monkeypatch):
     with mock_aws():
         lh = lambda_env(monkeypatch)
+        # API Gatewayが検証した印が無ければ拒否（認証の設定漏れでも、公開されない）
         assert lh.api_handler(ev("GET", "/api/status"))["statusCode"] == 401
-        r = lh.api_handler(ev("GET", "/api/status"))
-        assert "Basic" in r["headers"]["WWW-Authenticate"]
-        assert lh.api_handler(ev("GET", "/api/status", auth=basic("u", "wrong")))["statusCode"] == 401
-        assert lh.api_handler(ev("GET", "/api/status", auth="Basic !!!notbase64"))["statusCode"] == 401
-        assert lh.api_handler(ev("GET", "/api/status", auth=basic()))["statusCode"] == 200
-        # 他サイトからの書き込みを想定: 認証済みでも専用ヘッダーが無ければ拒否
-        assert lh.api_handler(ev("POST", "/api/kill", {"on": True}, auth=basic(), csrf=False))["statusCode"] == 403
-        assert lh.api_handler(ev("POST", "/api/kill", {"on": True}, auth=basic()))["statusCode"] == 200
+        assert lh.api_handler(ev("GET", "/api/status", claims={}))["statusCode"] == 401
+        assert lh.api_handler(ev("GET", "/api/status", claims={"sub": "s", "token_use": "access", "email": "me@example.com"}))["statusCode"] == 401  # IDトークンのみ
+        # 別のメールアドレスのユーザーは拒否
+        assert lh.api_handler(ev("GET", "/api/status", claims={"sub": "s", "token_use": "id", "email": "other@example.com"}))["statusCode"] == 401
+        # 大文字小文字の違いは同一とみなす
+        assert lh.api_handler(ev("GET", "/api/status", claims=OK))["statusCode"] == 200
+        # 他サイトからの書き込みを想定: ログイン済みでも専用ヘッダーが無ければ拒否
+        assert lh.api_handler(ev("POST", "/api/kill", {"on": True}, claims=OK, csrf=False))["statusCode"] == 403
+        assert lh.api_handler(ev("POST", "/api/kill", {"on": True}, claims=OK))["statusCode"] == 200
         # Xのコールバックだけは認証なし（stateが無ければ画面へ戻すだけ）
         r = lh.api_handler(ev("GET", "/api/x/callback", query={"state": "bogus"}))
         assert r["statusCode"] == 302 and r["headers"]["Location"].endswith("x=invalid")
         lh._api = None
 
 
-def test_lambda_fails_closed_without_hash(monkeypatch):
+def test_lambda_auth_config_is_public_and_has_no_secrets(monkeypatch):
     with mock_aws():
         lh = lambda_env(monkeypatch)
-        monkeypatch.delenv("XRONIX_BASIC_HASH")
-        assert lh.api_handler(ev("GET", "/api/status", auth=basic()))["statusCode"] == 401   # 設定漏れは全拒否
+        monkeypatch.setenv("XRONIX_COGNITO_CLIENT_ID", "client123")
+        r = lh.api_handler(ev("GET", "/api/auth-config"))
+        body = json.loads(r["body"])
+        assert r["statusCode"] == 200 and body == {"enabled": True, "region": "ap-northeast-1", "client_id": "client123"}
+        monkeypatch.delenv("XRONIX_COGNITO_CLIENT_ID")
+        assert json.loads(lh.api_handler(ev("GET", "/api/auth-config"))["body"])["enabled"] is False
+        lh._api = None
+
+
+def test_lambda_without_admin_email_still_needs_a_login(monkeypatch):
+    with mock_aws():
+        lh = lambda_env(monkeypatch)
+        monkeypatch.delenv("XRONIX_ADMIN_EMAIL")
+        assert lh.api_handler(ev("GET", "/api/status"))["statusCode"] == 401
+        assert lh.api_handler(ev("GET", "/api/status", claims=OK))["statusCode"] == 200
         lh._api = None
 
 
 def test_lambda_handlers_end_to_end(monkeypatch):
     with mock_aws():
         lh = lambda_env(monkeypatch)
-        a = basic()
-        r = lh.api_handler(ev("GET", "/api/status", auth=a))
+        r = lh.api_handler(ev("GET", "/api/status", claims=OK))
         assert r["statusCode"] == 200 and json.loads(r["body"])["mode"] == "live"
-        assert lh.api_handler(ev("PUT", "/api/secrets/openai_api_key", {"value": "SSMVALUE"}, auth=a))["statusCode"] == 200
+        assert lh.api_handler(ev("PUT", "/api/secrets/openai_api_key", {"value": "SSMVALUE"}, claims=OK))["statusCode"] == 200
         assert boto3.client("ssm").get_parameter(Name="/xronix/openai_api_key", WithDecryption=True)["Parameter"]["Value"] == "SSMVALUE"
-        r = lh.api_handler(ev("PUT", "/api/settings/job", {"enabled": True, "interval_minutes": 30}, auth=a))
+        r = lh.api_handler(ev("PUT", "/api/settings/job", {"enabled": True, "interval_minutes": 30}, claims=OK))
         assert json.loads(r["body"])["interval_minutes"] == 30
-        assert lh.api_handler(ev("POST", "/api/templates", {"category": "fan", "text": "ありがとう"}, auth=a))["statusCode"] == 201
+        assert lh.api_handler(ev("POST", "/api/templates", {"category": "fan", "text": "ありがとう"}, claims=OK))["statusCode"] == 201
         # 有効にした直後は、予定（15秒後）に達していないので実行しない。見守りも同じ
         assert lh.job_handler({"source": "schedule"})["ran"] is False
         assert lh.job_handler({"watchdog": True})["ran"] is False
