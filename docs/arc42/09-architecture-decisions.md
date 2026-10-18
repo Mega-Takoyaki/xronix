@@ -23,3 +23,4 @@
 | [0017](../adr/0017-cognito-login.md) | ログインをCognitoにし、Basic認証を廃止する | 採用 |
 | [0018](../adr/0018-conversation-limits.md) | 同じ相手との会話に上限を置く | 採用 |
 | [0019](../adr/0019-send-queue.md) | 送信キュー（自動送信を、間隔をあけて1件ずつ送る） | 採用 |
+| [0020](../adr/0020-telegram-approval.md) | Telegramで、承認待ちを受け取り、承認・却下する | 採用 |

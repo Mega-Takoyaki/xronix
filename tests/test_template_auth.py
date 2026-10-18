@@ -25,7 +25,8 @@ def test_api_requires_jwt_except_two_public_routes():
     assert "audience:\n                - !Ref UserPoolClient" in T
     public = re.findall(r"Path: (/api/[\w/{}+-]+), Method: GET, Auth: \{Authorizer: NONE\}", T)
     assert sorted(public) == ["/api/auth-config", "/api/x/callback"]
-    assert "Authorizer: NONE" not in T.replace("Auth: {Authorizer: NONE}", "")  # それ以外に認証なしの経路は作らない
+    assert re.findall(r"Path: (/api/telegram/webhook), Method: POST, Auth: \{Authorizer: NONE\}", T) == ["/api/telegram/webhook"]
+    assert T.count("Authorizer: NONE") == 3  # 認証なしの経路は、この3つだけ（コールバック、ログイン設定、Telegramのボタン）
 
 
 def test_admin_email_is_a_parameter_not_a_literal():

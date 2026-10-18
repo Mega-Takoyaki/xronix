@@ -15,7 +15,7 @@ from .api import Api
 from .app import build_aws
 
 _api: Api | None = None
-PUBLIC_PATHS = {"/api/x/callback", "/api/auth-config"}
+PUBLIC_PATHS = {"/api/x/callback", "/api/auth-config", "/api/telegram/webhook"}
 
 
 def _get_api() -> Api:
@@ -59,7 +59,7 @@ def api_handler(event, context=None):
         body = json.loads(raw) if raw else {}
     except ValueError:
         return _resp(400, {"error": "JSONが不正です"})
-    status, payload, extra = _get_api().handle(method, path, event.get("queryStringParameters") or {}, body)
+    status, payload, extra = _get_api().handle(method, path, event.get("queryStringParameters") or {}, body, headers)
     return _resp(status, payload, extra)
 
 

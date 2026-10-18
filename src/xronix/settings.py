@@ -15,7 +15,7 @@ DEFAULTS: dict[str, dict] = {
     "safety": {"kill_switch": False, "daily_limit": 10, "like_daily_limit": 20, "auto_daily_limit": 5,
                "conversation_reply_limit": 3, "author_daily_limit": 5},
     "send": {"queue_interval_seconds": 120, "queue_jitter_seconds": 60, "manual_via_queue": False},
-    "notify": {"telegram_enabled": False, "telegram_chat_id": "", "site_url": ""},
+    "notify": {"telegram_enabled": False, "telegram_chat_id": "", "site_url": "", "telegram_actions": False, "telegram_user_id": ""},
 }
 
 # 画面から更新できる項目と型。ここに無い項目は保存しない。
@@ -27,7 +27,7 @@ SCHEMA: dict[str, dict[str, type]] = {
     "safety": {"kill_switch": bool, "daily_limit": int, "like_daily_limit": int, "auto_daily_limit": int,
                "conversation_reply_limit": int, "author_daily_limit": int},
     "send": {"queue_interval_seconds": int, "queue_jitter_seconds": int, "manual_via_queue": bool},
-    "notify": {"telegram_enabled": bool, "telegram_chat_id": str, "site_url": str},
+    "notify": {"telegram_enabled": bool, "telegram_chat_id": str, "site_url": str, "telegram_actions": bool, "telegram_user_id": str},
 }
 
 CHOICES = {
@@ -125,6 +125,8 @@ class Settings:
                 raise ValidationError("TelegramのチャットIDは数字（例: 123456789、グループは -100…）または @チャンネル名で指定してください")
             if cur["site_url"] and not cur["site_url"].startswith("https://"):
                 raise ValidationError("画面のURLは https:// で始めてください")
+            if cur["telegram_user_id"] and not re.fullmatch(r"\d{1,20}", cur["telegram_user_id"]):
+                raise ValidationError("Telegramの許可するユーザーIDは、数字で指定してください")
 
     def set_internal(self, section: str, **values) -> None:
         """画面外の更新（接続情報など）。型検査は行わない。"""

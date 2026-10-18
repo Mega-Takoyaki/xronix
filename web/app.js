@@ -401,7 +401,8 @@ async function renderSettings() {
   const tgOn = h("input", { type: "checkbox", checked: s.notify.telegram_enabled });
   const tgChat = h("input", { type: "text", placeholder: "例: 123456789" }); tgChat.value = s.notify.telegram_chat_id;
   const chatList = h("div", { style: "flex:1" });
-  const siteUrl = h("input", { type: "text", placeholder: "https://…（任意）" }); siteUrl.value = s.notify.site_url;
+  const siteUrl = h("input", { type: "text", placeholder: "https://…（任意。承認ボタンには必須）" }); siteUrl.value = s.notify.site_url;
+  const tgUser = h("input", { type: "text", placeholder: "例: 123456789（グループのときだけ）" }); tgUser.value = s.notify.telegram_user_id || "";
   const ncard = h("div", { class: "card" }, h("h3", {}, "通知（Telegram）", tip("承認待ちの件数だけを送ります。返信の本文は送りません。")),
     h("label", { class: "inline" }, tgOn, "新着があったら通知する"),
     secretField("telegram_bot_token", "ボットトークン", "Telegramの BotFather でボットを作ると発行されます。画面には表示されません。", s.secrets, reload),
@@ -416,9 +417,16 @@ async function renderSettings() {
           chatList.replaceChildren(h("div", { class: "muted" }, "複数見つかりました。通知を送るチャットを選んでください。"),
             ...r.chats.map((c) => h("div", { class: "row" }, h("button", { onclick: () => pick(c) }, "選ぶ"), h("span", {}, `${c.name || c.username || "（名前なし）"}　${c.type}　${c.id}`))));
         } }, "自動で取得"), chatList)),
-      h("div", { class: "grow" }, lbl("画面のURL（任意）", "入力すると、通知にこのURLを添えます。"), siteUrl)),
+      h("div", { class: "grow" }, lbl("画面のURL（任意）", "入力すると、通知にこのURLを添えます。承認ボタンを使うときは、TelegramのWebhookの宛先にもなるので、必須です（https://…cloudfront.net のような、このアプリのURL）。"), siteUrl)),
+    h("div", { class: "row", style: "margin-top:10px" },
+      h("div", { class: "grow" }, lbl("許可するユーザーID（任意）", "承認ボタンを押せる人を、あなたのTelegramのユーザーIDに限ります。個人とのチャットなら、チャットIDがユーザーIDと同じなので、空のままで構いません。グループのチャットを使う場合だけ、入力してください。"), tgUser)),
+    h("div", { class: "row", style: "margin-top:10px;align-items:center" },
+      h("div", { class: s.notify.telegram_actions ? "ok" : "muted" }, s.notify.telegram_actions ? "承認ボタン: 有効（本文の全文を、Telegramに送ります）" : "承認ボタン: 無効（件数だけを通知します）", tip("有効にすると、承認待ちが、相手の投稿と返信案の全文つきで、「承認して送信」「却下」のボタンと一緒に、Telegramに届きます。ボタンの結果は、そのメッセージ上に表示されます。ボタンを押せるのは、許可したユーザーIDだけです。承認は、画面の承認と同じ検査（上限・ブロック・緊急停止・リンク禁止）を通ります。返信案の書き換えは、画面で行います。本文がTelegramのサーバーを通る点に、ご注意ください。有効にするとTelegramのWebhookを登録するため、「自動で取得」（チャットの検出）は使えなくなります。")),
+      s.notify.telegram_actions
+        ? h("button", { onclick: async () => { if (!confirm("承認ボタンを無効にします（Webhookを削除）。よろしいですか？")) return; await act(() => api("POST", "/api/telegram/disable"), "無効にしました", "info"); renderSettings(); } }, "承認ボタンを無効にする")
+        : h("button", { class: "primary", onclick: async () => { if (!confirm("承認待ちの本文（相手の投稿と返信案の全文）を、Telegramに送るようにします。よろしいですか？\n\n先に「保存」を押して、ボットトークン・チャットID・画面のURLを保存してください。")) return; await act(() => api("POST", "/api/telegram/enable"), "承認ボタンを有効にしました"); renderSettings(); } }, "承認ボタンを有効にする")),
     h("div", { class: "row end", style: "margin-top:10px" },
-      h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/notify", { telegram_enabled: tgOn.checked, telegram_chat_id: tgChat.value, site_url: siteUrl.value }), "保存しました"); } }, "保存"),
+      h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/notify", { telegram_enabled: tgOn.checked, telegram_chat_id: tgChat.value, site_url: siteUrl.value, telegram_user_id: tgUser.value }), "保存しました"); } }, "保存"),
       h("button", { onclick: async () => { const r = await act(() => api("POST", "/api/notify/test")); if (r) toast(r.sent ? "送信しました" : `送信に失敗しました: ${r.reason}`, r.sent ? "success" : "error"); } }, "テスト送信（保存後に押す）")));
 
   // 安全装置

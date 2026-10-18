@@ -56,7 +56,7 @@ def make_handler(api: Api):
                         body = json.loads(self.rfile.read(n))
                     except ValueError:
                         return self._send(400, '{"error":"JSONが不正です"}'.encode(), "application/json")
-            status, payload, headers = api.handle(method, u.path, query, body)
+            status, payload, headers = api.handle(method, u.path, query, body, {k.lower(): v for k, v in self.headers.items()})
             self._send(status, json.dumps(payload, ensure_ascii=False).encode(), "application/json; charset=utf-8", headers)
 
         def _static(self):

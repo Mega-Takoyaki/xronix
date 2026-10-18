@@ -54,6 +54,8 @@ class Api:
             ("POST", r"/api/rules/(?P<id>\w+)/move", self.move_rule),
             ("POST", r"/api/dev/mock-posts", self.mock_posts),
             ("POST", r"/api/notify/test", self.notify_test),
+            ("POST", r"/api/telegram/enable", self.telegram_enable),
+            ("POST", r"/api/telegram/disable", self.telegram_disable),
             ("POST", r"/api/notify/detect-chat", self.notify_detect_chat),
             ("POST", r"/api/kill", self.kill),
             ("GET", r"/api/mentions", self.list_mentions),
@@ -83,7 +85,10 @@ class Api:
         ]:
             self.routes.append((method, re.compile(f"^{pattern}$"), fn))
 
-    def handle(self, method: str, path: str, query: dict | None = None, body: dict | None = None) -> Result:
+    def handle(self, method: str, path: str, query: dict | None = None, body: dict | None = None, headers: dict | None = None) -> Result:
+        if method == "POST" and path == "/api/telegram/webhook":  # 認証なしの入口。合言葉（ヘッダー）を、Telegramの処理が確かめる
+            st, payload = self.app.telegram.handle({k.lower(): v for k, v in (headers or {}).items()}, body or {})
+            return st, payload, {}
         path_matched = False
         for m, rx, fn in self.routes:
             match = rx.match(path)
@@ -251,6 +256,13 @@ class Api:
         ok, reason = self.app.notifier.send("XroniX: 通知のテストです。")
         return _ok({"sent": ok, "reason": reason})
 
+    def telegram_enable(self, q, b) -> Result:
+        return _ok(self.app.telegram.enable())
+
+    def telegram_disable(self, q, b) -> Result:
+        self.app.telegram.disable()
+        return _ok()
+
     def notify_detect_chat(self, q, b) -> Result:
         """ボットに届いたメッセージから、チャットIDを探す。先にボットへメッセージを送っておく。"""
         chats = self.app.notifier.detect_chats()
@@ -282,8 +294,11 @@ class Api:
 
     def reply(self, q, b, id) -> Result:
         if self.app.settings.get("send")["manual_via_queue"]:  # 承認からの送信も、キューに入れる設定
-            return _ok(self.app.sendq.enqueue(id, str(b.get("text", ""))))
+            m = self.app.sendq.enqueue(id, str(b.get("text", "")))
+            self.app.telegram.mark(m, "✅ 承認しました（送信キューに入れました）")
+            return _ok(m)
         m = self.app.sender.send(id, str(b.get("text", "")))
+        self.app.telegram.mark(m, "✅ 画面から承認して送信しました")
         return _ok(m)
 
     def sendq_view(self, q, b) -> Result:
@@ -304,6 +319,7 @@ class Api:
         if not m or m["state"] not in ("pending", "review", "failed"):
             return _err("この状態では却下できません", 409)
         self.app.repo.update_if("mentions", id, {"state": "rejected", "updated_at": iso(self.app.now())}, {"state": m["state"]})
+        self.app.telegram.mark(m, "❌ 却下しました")
         return _ok()
 
     def resolve(self, q, b, id) -> Result:
