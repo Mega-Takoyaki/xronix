@@ -42,6 +42,24 @@ class Notifier:
         self.log.warn("notify", f"Telegramへの通知に失敗しました（HTTP {r.status}）: {reason}")
         return False, f"Telegramがエラーを返しました（HTTP {r.status}）: {reason}"
 
+    def call(self, method: str, payload: dict) -> tuple[bool, dict, str]:
+        """Telegram Bot APIの呼び出し。(成功か, 結果, 失敗の理由)。トークンは、理由やログに出さない。"""
+        token = self.secrets.get("telegram_bot_token")
+        if not token:
+            return False, {}, "ボットトークンが未設定です"
+        try:
+            r = self.http.request("POST", f"https://api.telegram.org/bot{token}/{method}", {"Content-Type": "application/json"},
+                                  json.dumps(payload).encode(), timeout=10)
+        except NetworkError:
+            return False, {}, "Telegramに接続できませんでした"
+        try:
+            body = json.loads(r.body or b"{}")
+        except ValueError:
+            body = {}
+        if r.status == 200 and body.get("ok", True):
+            return True, body.get("result") if isinstance(body.get("result"), dict) else {}, ""
+        return False, {}, f"Telegramがエラーを返しました（HTTP {r.status}）: {body.get('description', '')}"
+
     def detect_chats(self) -> list[dict]:
         """ボットに届いた最近のメッセージから、チャット（ID・種類・名前）の一覧を作る。新しい順。
 

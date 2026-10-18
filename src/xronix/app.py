@@ -15,6 +15,7 @@ from .sender import Sender
 from .settings import Settings
 from .templates import Templates
 from .sendqueue import SendQueue
+from .telegram_bot import TelegramBot
 from .tokens import TokenManager
 from .xclient import LiveX, MockX
 
@@ -36,6 +37,7 @@ class App:
     rules: Rules
     engine: ActionEngine
     sendq: SendQueue
+    telegram: TelegramBot
     now: object = utcnow
 
     @property
@@ -62,8 +64,11 @@ def build(repo, secrets, x, http: Http | None = None, now=utcnow, sleep=None, sc
     scheduler = scheduler or NullScheduler()
     sendq = SendQueue(repo, settings, sender, scheduler, logger, now, rng)
     engine = ActionEngine(repo, settings, x, tokens, ai, templates, notifier, sender, logger, now, sendq=sendq)
-    jobs = JobRunner(repo, settings, tokens, x, ai, templates, notifier, logger, now, scheduler=scheduler, rng=rng, rules=rules, engine=engine)
-    return App(repo, secrets, settings, x, http, logger, templates, tokens, ai, notifier, jobs, sender, rules, engine, sendq, now)
+    telegram = TelegramBot(repo, settings, secrets, notifier, logger, now)
+    jobs = JobRunner(repo, settings, tokens, x, ai, templates, notifier, logger, now, scheduler=scheduler, rng=rng, rules=rules, engine=engine, telegram=telegram)
+    app = App(repo, secrets, settings, x, http, logger, templates, tokens, ai, notifier, jobs, sender, rules, engine, sendq, telegram, now)
+    telegram.attach(app)
+    return app
 
 
 def build_local(data_dir: str = ".xronix", mode: str | None = None) -> App:

@@ -24,14 +24,14 @@ WATCHDOG_GRACE_SECONDS = 120 # 見守り（15分ごと）は、予定からこ�
 
 class JobRunner:
     def __init__(self, repo, settings, tokens, x, ai, templates, notifier, logger, now=utcnow, scheduler=None, rng=None,
-                 rules=None, engine=None):
+                 rules=None, engine=None, telegram=None):
         self.repo, self.settings, self.tokens, self.x = repo, settings, tokens, x
         self.ai, self.templates, self.notifier, self.log, self.now = ai, templates, notifier, logger, now
         self.lease = Lease(repo, "job", now)
         from .scheduler import NullScheduler
         self.scheduler = scheduler or NullScheduler()
         self.rng = rng or random.SystemRandom()
-        self.rules, self.engine = rules, engine
+        self.rules, self.engine, self.telegram = rules, engine, telegram
 
     # --- 状態 ---
     def state(self) -> dict:
@@ -178,7 +178,9 @@ class JobRunner:
         self._check_metrics(run, token, xcfg["user_id"])
         pending = len(self.pending_ids())
         if run["new"] and pending:
-            run["notified"] = self.notifier.notify_pending(pending)
+            # Telegramの承認ボタンが有効なら、承認待ちを1件ずつ（全文＋ボタン）送る。そうでなければ、件数だけ知らせる
+            sent = self.telegram.notify_new(run["started_at"], pending) if self.telegram else 0
+            run["notified"] = bool(sent) or self.notifier.notify_pending(pending)
         self._dbg(run, f"終了: 取得{run['fetched']}件、新規{run['new']}件、返信案{run['drafted']}件、承認待ち{pending}件、読み取り{run['reads']}件＋他人の投稿{run['thread_reads']}件")
 
     def _check_metrics(self, run: dict, token: str, my_id: str) -> None:

@@ -162,6 +162,10 @@ Resources:
         PublicCallback:
           Type: HttpApi
           Properties: {ApiId: !Ref HttpApi, Path: /api/x/callback, Method: GET, Auth: {Authorizer: NONE}}
+        # TelegramのWebhook（ボタンの操作）。登録時の合言葉（ヘッダー）と、押した人のユーザーIDを、アプリが確かめる
+        PublicTelegram:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /api/telegram/webhook, Method: POST, Auth: {Authorizer: NONE}}
         PublicAuthConfig:
           Type: HttpApi
           Properties: {ApiId: !Ref HttpApi, Path: /api/auth-config, Method: GET, Auth: {Authorizer: NONE}}
