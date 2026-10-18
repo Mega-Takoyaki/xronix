@@ -160,12 +160,41 @@ def test_live_replies_to_me_and_quotes_requests():
     from conftest import FakeHttp
     http = FakeHttp()
     x = LiveX(http, sleep=lambda s: None)
+    import time as _t
+    fresh = str((int(_t.time() * 1000) - 1288834974657 - 3600_000) << 22)  # 1時間前に作られた投稿のID
     http.push(200, {"data": [{"id": "5"}], "meta": {"newest_id": "5", "next_token": "NT"}})
     http.push(200, {"data": [{"id": "4"}], "meta": {"newest_id": "4"}})
-    r = x.replies_to_me("tok", "example_account", "3", max_pages=3)
+    r = x.replies_to_me("tok", "example_account", fresh, max_pages=3)
     assert [t["id"] for t in r["tweets"]] == ["5", "4"] and r["newest_id"] == "5" and r["truncated"] is False
     q1 = urllib.parse.parse_qs(urllib.parse.urlparse(http.calls[0]["url"]).query)
-    assert "/2/tweets/search/recent" in http.calls[0]["url"] and q1["query"] == ["to:example_account -from:example_account"] and q1["since_id"] == ["3"]
+    assert "/2/tweets/search/recent" in http.calls[0]["url"] and q1["query"] == ["to:example_account -from:example_account"] and q1["since_id"] == [fresh]
     assert urllib.parse.parse_qs(urllib.parse.urlparse(http.calls[1]["url"]).query)["next_token"] == ["NT"]
     http.push(200, {"data": [{"id": "9"}]})
     assert x.quotes_of("tok", "77")["reads"] == 1 and "/2/tweets/77/quote_tweets" in http.calls[-1]["url"]
+
+
+def test_search_since_id_rejects_values_x_would_refuse():
+    import time as _t
+    from xronix.xclient import search_since_id
+    now = int(_t.time() * 1000)
+    mk = lambda ms_ago: str((now - 1288834974657 - ms_ago) << 22)
+    assert search_since_id(None) is None and search_since_id("") is None and search_since_id("0") is None   # "0"は、検索が400で拒否する
+    assert search_since_id("abc") is None
+    assert search_since_id(mk(3600_000), now_ms=now) == mk(3600_000)
+    assert search_since_id(mk(8 * 86400_000), now_ms=now) is None   # 7日より古いIDも拒否される
+
+
+def test_live_search_omits_unusable_since_id_and_explains_400():
+    from conftest import FakeHttp
+    from xronix.xclient import LiveX, XError
+    http = FakeHttp()
+    x = LiveX(http, sleep=lambda s: None)
+    http.push(200, {"data": [], "meta": {}})
+    x.replies_to_me("tok", "example_account", "0")
+    assert "since_id" not in http.calls[-1]["url"]
+    http.push(400, {"title": "Invalid Request", "detail": "One or more parameters to your request was invalid.",
+                    "errors": [{"parameters": {"since_id": ["5"]}, "message": "The since_id query parameter value [5] is not valid"}]})
+    with pytest.raises(XError) as e:
+        x.replies_to_me("tok", "example_account", None)
+    msg = str(e.value)
+    assert "HTTP 400" in msg and "since_id query parameter value [5]" in msg and "項目: since_id" in msg and "要求:" in msg and "tok" not in msg

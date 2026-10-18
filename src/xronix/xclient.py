@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import time
 import secrets as pysecrets
 import urllib.parse
 
@@ -95,7 +96,7 @@ class LiveX:
         if r.status == 401:
             raise AuthRequired("アクセストークンが無効です", 401)
         if r.status != 200:
-            raise XError(f"X APIの取得に失敗しました: GET {path}（HTTP {r.status}）{_error_detail(r)}", r.status)
+            raise XError(f"X APIの取得に失敗しました: GET {path}（HTTP {r.status}）{_error_detail(r)}{_params_note(params)}", r.status)
         return _json(r)
 
     def me(self, token: str) -> dict:
@@ -128,6 +129,7 @@ class LiveX:
 
     def replies_to_me(self, token: str, username: str, since_id: str | None, max_pages: int = 3) -> dict:
         """自分宛ての返信を、検索で取る（to:）。返信文に自分の@が無い返信も拾える。直近7日が対象。"""
+        since_id = search_since_id(since_id)
         tweets: list[dict] = []
         newest, next_token, reads = None, None, 0
         for _ in range(max_pages):
@@ -301,13 +303,41 @@ class MockX:
 
 
 def _error_detail(r: Response) -> str:
-    """Xのエラー応答から、原因が分かる部分（title／detail）だけを取り出す。トークンなどは含まれない。"""
+    """Xのエラー応答から、原因が分かる部分（title／detail／どの項目が不正か）だけを取り出す。トークンなどは含まれない。"""
     b = _json(r)
     parts = [str(b.get(k)) for k in ("title", "detail") if isinstance(b.get(k), str)]
-    if not parts and isinstance(b.get("errors"), list) and b["errors"]:
-        e = b["errors"][0]
-        parts = [str(e.get(k)) for k in ("title", "message", "detail") if isinstance(e, dict) and isinstance(e.get(k), str)]
-    return (" — " + " / ".join(parts))[:300] if parts else ""
+    errs = b.get("errors")
+    if isinstance(errs, list):
+        for e in errs[:3]:
+            if not isinstance(e, dict):
+                continue
+            msg = e.get("message") or e.get("detail") or e.get("title")
+            if isinstance(msg, str) and msg not in parts:
+                parts.append(msg)
+            if isinstance(e.get("parameters"), dict):
+                parts.append("項目: " + ", ".join(str(k) for k in list(e["parameters"])[:5]))
+    return (" — " + " / ".join(parts))[:400] if parts else ""
+
+
+def _params_note(params: dict | None) -> str:
+    """失敗した要求の、秘密でない項目（取得位置や件数）。原因の切り分けに使う。"""
+    if not params:
+        return ""
+    keep = {k: v for k, v in params.items() if k in ("since_id", "max_results", "query", "pagination_token", "next_token")}
+    return " 要求: " + ", ".join(f"{k}={v}" for k, v in keep.items()) if keep else ""
+
+
+TWITTER_EPOCH_MS = 1288834974657
+SEARCH_WINDOW_DAYS = 6.5  # 検索（直近7日）で受け付けるsince_idは、7日以内の投稿のID。余裕を見て6.5日
+
+
+def search_since_id(since_id: str | None, now_ms: float | None = None) -> str | None:
+    """検索のsince_idに使える値だけを返す。"0" や、7日より古いIDは、Xが400で拒否するため、付けない。"""
+    if not since_id or not str(since_id).isdigit() or int(since_id) == 0:
+        return None
+    created_ms = (int(since_id) >> 22) + TWITTER_EPOCH_MS
+    now = time.time() * 1000 if now_ms is None else now_ms
+    return str(since_id) if now - created_ms < SEARCH_WINDOW_DAYS * 86400 * 1000 else None
 
 
 def _json(r: Response) -> dict:

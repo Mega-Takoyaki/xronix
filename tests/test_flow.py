@@ -359,3 +359,13 @@ def test_x_error_message_includes_reason(app):
     with pytest.raises(XError) as e:
         x.replies_to_me("tok", "example_account", None)
     assert "/2/tweets/search/recent" in str(e.value) and "HTTP 403" in str(e.value) and "Forbidden" in str(e.value) and "tok" not in str(e.value)
+
+
+def test_reply_cursor_is_never_zero(app):
+    """検索は since_id=0 を拒否する。結果が空の最初の実行でも、"0" を保存しない"""
+    start(app)
+    app.repo.delete("state", "reply_cursor")
+    app.repo.put("state", "cursor", {"since_id": "1"})
+    r = run(app)
+    cur = app.repo.get("state", "reply_cursor")
+    assert r["status"] == "ok" and cur is not None and cur["since_id"] != "0"

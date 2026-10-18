@@ -227,7 +227,7 @@ class JobRunner:
             run["thread_reads"] += res["reads"]
             self._dbg(run, f"返信の検索（to:@{xcfg['username']}）: {len(res['tweets'])}件を取得（取得位置={cur or 'なし'}、最新ID={res['newest_id'] or 'なし'}、続きあり={'はい' if res.get('truncated') else 'いいえ'}）")
             if skip:
-                self.repo.put("state", "reply_cursor", {"since_id": res["newest_id"] or "0"})
+                self.repo.put("state", "reply_cursor", {"since_id": res["newest_id"] or ""})  # 空なら、次回は直近7日をすべて読む（"0"は検索が拒否する）
                 self._dbg(run, "返信の検索: 取得を始めたばかりのため、取り込まずに取得位置だけを記録しました")
                 return
             for tw in reversed(res["tweets"]):
@@ -235,7 +235,7 @@ class JobRunner:
             if res["newest_id"]:
                 self.repo.put("state", "reply_cursor", {"since_id": res["newest_id"]})
             elif first:
-                self.repo.put("state", "reply_cursor", {"since_id": "0"})
+                self.repo.put("state", "reply_cursor", {"since_id": ""})
         except AuthRequired:
             raise
         except XError as e:
