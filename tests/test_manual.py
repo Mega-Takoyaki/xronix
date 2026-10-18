@@ -48,3 +48,11 @@ def test_mobile_layout_rules_exist():
     assert re.search(r"@media \(max-width:640px\)\{[^}]*table\{display:block;overflow-x:auto", css, re.S)
     js = (WEB / "app.js").read_text(encoding="utf-8")
     assert "--tip-left" in js and "document.documentElement.clientWidth" in js
+
+
+def test_viewport_blocks_auto_zoom_out_and_assets_are_not_cached():
+    """スマホで、内容が少しでもはみ出すと、ブラウザが画面全体を縮小表示する。最小の倍率を1に固定する。配信時は、古い画面を使い続けさせない"""
+    for name in ("index.html", "manual.html"):
+        assert "minimum-scale=1" in (WEB / name).read_text(encoding="utf-8")
+    wf = (WEB.parent / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    assert re.search(r"aws s3 sync web .* --cache-control \"no-cache\"", wf)
