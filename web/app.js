@@ -576,6 +576,25 @@ async function render() {
   try {
     await ({ queue: () => renderQueue(true), history: () => renderQueue(false), rules: renderRules, templates: renderTemplates, jobs: renderJobs, stats: renderStats, settings: renderSettings }[tab] || (() => renderQueue(true)))();
   } catch (e) { view.replaceChildren(h("div", { class: "empty err" }, e.message)); }
+  layoutDiag();
+}
+// 表示の診断（?diag=1 を付けて開くと、画面の下に、幅の測定結果を出す。スマホで横にはみ出す原因を、実機で調べるため）
+function layoutDiag() {
+  if (!new URLSearchParams(location.search).get("diag")) return;
+  setTimeout(() => {
+    const de = document.documentElement, cw = de.clientWidth, vv = window.visualViewport;
+    const over = [];
+    document.querySelectorAll("body *").forEach((e) => {
+      const r = e.getBoundingClientRect(), st = getComputedStyle(e);
+      if (r.width > 0 && st.display !== "none" && st.position !== "fixed" && r.right > cw + 1) over.push(`${e.tagName.toLowerCase()}${e.className ? "." + String(e.className).trim().split(/\s+/)[0] : ""} 右端${Math.round(r.right)} 幅${Math.round(r.width)} 「${(e.textContent || "").trim().slice(0, 14)}」`);
+    });
+    const lines = [`タブ: ${tab}`, `innerWidth ${innerWidth} / clientWidth ${cw} / scrollWidth ${de.scrollWidth} / body.scrollWidth ${document.body.scrollWidth}`,
+      `visualViewport: 幅${vv ? Math.round(vv.width) : "-"} 倍率${vv ? vv.scale.toFixed(2) : "-"} 左${vv ? Math.round(vv.offsetLeft) : "-"} / DPR ${devicePixelRatio}`,
+      `はみ出す要素 ${over.length}件:`, ...over.slice(0, 12)];
+    let box = document.getElementById("layout-diag");
+    if (!box) { box = h("pre", { id: "layout-diag", style: "position:fixed;left:0;right:0;bottom:0;max-height:38%;overflow:auto;margin:0;padding:6px;background:rgba(0,0,0,.85);color:#7CFC00;font:11px/1.35 monospace;z-index:999;white-space:pre-wrap;word-break:break-all", onclick: () => box.remove() }); document.body.append(box); }
+    box.textContent = lines.join("\n") + "\n（タップで閉じる）";
+  }, 600);
 }
 $("#tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { tab = b.dataset.tab; render(); } });
 XAuth.ready().then(() => {

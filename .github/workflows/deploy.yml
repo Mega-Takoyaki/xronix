@@ -84,7 +84,8 @@ jobs:
           echo "callback=$(q XCallbackUrl)" >> "$GITHUB_OUTPUT"
 
       - name: 画面を配信する（S3へ同期）
-        run: aws s3 sync web "s3://${{ steps.out.outputs.bucket }}" --delete
+        # no-cache: ブラウザが古い画面（CSS・JS）を使い続けないよう、毎回、最新かを確認させる
+        run: aws s3 sync web "s3://${{ steps.out.outputs.bucket }}" --delete --cache-control "no-cache"
 
       - name: 動作確認
         env:

@@ -85,6 +85,8 @@ button.logout{margin-left:4px}
 
 /* スマホ: 画面の横幅を超えないようにする */
 html,body{max-width:100%;overflow-x:hidden}
+body{position:relative;width:100%}
+input,select,textarea,button{max-width:100%}
 main,.card,.row>*{min-width:0}
 @media (max-width:640px){
   table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
