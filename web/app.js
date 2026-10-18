@@ -407,6 +407,8 @@ async function renderSettings() {
   const lim = h("input", { type: "number", min: 0, max: 100 }); lim.value = s.safety.daily_limit;
   const likeLim = h("input", { type: "number", min: 0, max: 100 }); likeLim.value = s.safety.like_daily_limit;
   const autoLim = h("input", { type: "number", min: 0, max: 100 }); autoLim.value = s.safety.auto_daily_limit;
+  const convLim = h("input", { type: "number", min: 1, max: 50 }); convLim.value = s.safety.conversation_reply_limit;
+  const authorLim = h("input", { type: "number", min: 1, max: 50 }); authorLim.value = s.safety.author_daily_limit;
   const { items: blocks } = await api("GET", "/api/blocklist");
   const bid = h("input", { type: "text", placeholder: "ユーザーID（数字）" }), bnote = h("input", { type: "text", placeholder: "メモ（任意）" });
   const scard = h("div", { class: "card" }, h("h3", {}, "安全装置"),
@@ -414,7 +416,10 @@ async function renderSettings() {
       h("div", { class: "grow" }, lbl("1日の送信上限", "承認した返信と、自動送信を合わせた、1日の上限です。日本時間の0時に数え直します。超える送信は拒否されます。"), lim),
       h("div", { class: "grow" }, lbl("1日の自動送信の上限", "ルールで「承認なしで送信」したものの上限です。超えた分は、承認待ちに入ります。0なら、自動送信を止めます。"), autoLim),
       h("div", { class: "grow" }, lbl("1日のいいね上限", "ルールで付ける、いいねの上限です。大量のいいねは、スパム判定の原因になります。0なら、いいねを止めます。"), likeLim)),
-    h("div", { class: "row end", style: "margin:8px 0" }, h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/safety", { daily_limit: Number(lim.value), auto_daily_limit: Number(autoLim.value), like_daily_limit: Number(likeLim.value) }), "保存しました"); refreshStatus(); } }, "保存")),
+    h("div", { class: "row" },
+      h("div", { class: "grow" }, lbl("同じ相手との会話の返信上限（回）", "同じ相手に、同じ会話の中で返信した回数の上限です。超えると、ルールによる返信案づくりと自動送信を止めます（人が承認する送信は止めません）。相手が返信を繰り返す場合や、相手も自動返信の場合に、会話が終わらなくなることを防ぎます。"), convLim),
+      h("div", { class: "grow" }, lbl("同じ相手への1日の返信上限（回）", "同じ相手に、1日（日本時間）に返信した回数の上限です。会話をまたいで数えます。超えると、ルールによる返信案づくりと自動送信を止めます。"), authorLim)),
+    h("div", { class: "row end", style: "margin:8px 0" }, h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/safety", { daily_limit: Number(lim.value), auto_daily_limit: Number(autoLim.value), like_daily_limit: Number(likeLim.value), conversation_reply_limit: Number(convLim.value), author_daily_limit: Number(authorLim.value) }), "保存しました"); refreshStatus(); } }, "保存")),
     lbl("ブロック対象", "ここに入れたユーザーには、ルールを実行せず、送信もできません。Xのブロックとは別の、このアプリ内の一覧です。"),
     h("div", { class: "row" }, h("div", { class: "grow" }, bid), h("div", { class: "grow" }, bnote), h("button", { onclick: async () => { if (await act(() => api("POST", "/api/blocklist", { author_id: bid.value, note: bnote.value }), "追加しました")) renderSettings(); } }, "追加")),
     blocks.length ? h("table", {}, blocks.map((b) => h("tr", {}, h("td", {}, b.id), h("td", {}, b.note), h("td", {}, fmt(b.created_at)), h("td", {}, h("button", { class: "danger", onclick: async () => { await act(() => api("DELETE", `/api/blocklist/${b.id}`)); renderSettings(); } }, "解除"))))) : h("div", { class: "muted", style: "margin-top:8px" }, "登録はありません"));

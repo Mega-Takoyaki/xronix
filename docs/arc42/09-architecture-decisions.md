@@ -21,3 +21,4 @@
 | [0015](../adr/0015-bedrock-model-list.md) | Bedrockのモデルを、使える一覧から選び、既定は安価なモデルを自動で選ぶ | 採用 |
 | [0016](../adr/0016-wide-fetch.md) | 取得範囲を広げる（自分の@が無い返信、引用）。詳細ログ | 採用 |
 | [0017](../adr/0017-cognito-login.md) | ログインをCognitoにし、Basic認証を廃止する | 採用 |
+| [0018](../adr/0018-conversation-limits.md) | 同じ相手との会話に上限を置く | 採用 |
