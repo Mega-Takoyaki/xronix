@@ -209,23 +209,40 @@ def test_ai_unavailable_in_mock_mode_falls_back(app, bedrock):
 
 
 # ---------- 承認なしの送信 ----------
-def test_send_reply_template_sends_without_approval(app):
+def drain(app, clock, limit=20):
+    """送信キューが空になるまで、時計を進めて送る。送った件数を返す。"""
+    n = 0
+    for _ in range(limit):
+        if not app.sendq.queued():
+            break
+        clock.advance(minutes=60)
+        if app.sendq.tick("schedule") is not None:
+            n += 1
+    return n
+
+
+
+def test_send_reply_template_sends_without_approval(app, clock):
     connect_and_start(app)
     only_rule(app, categories=["fan"], actions=[{"type": "send_reply", "source": "template"}])
     app.x.add_mentions(["可愛い"])
     app.jobs.run("manual")
     m = mentions(app)[0]
-    assert m["state"] == "sent" and m["auto_sent"] is True and app.x.sent[0]["in_reply_to"] == m["id"]
+    assert m["state"] == "send_queued" and m["auto_queued"] is True and app.x.sent == [] and "送信キューに入れました" in m["actions"][0]["detail"]   # すぐには送らない
+    assert drain(app, clock) == 1
+    m = mentions(app)[0]
+    assert m["state"] == "sent" and app.x.sent[0]["in_reply_to"] == m["id"]
     assert app.sender.sent_today() == 1 and m["actions"][0]["ok"] is True
 
 
-def test_send_reply_ai_and_auto_limit_falls_back_to_queue(app, bedrock):
+def test_send_reply_ai_and_auto_limit_falls_back_to_queue(app, bedrock, clock):
     connect_and_start(app)
     app.settings.update("safety", {"auto_daily_limit": 1})
     ai_on(app, bedrock, "ありがとう1", "ありがとう2")
     only_rule(app, categories=["fan"], actions=[{"type": "send_reply", "source": "ai", "prompt": "お礼"}])
     app.x.add_mentions(["可愛い1", "可愛い2"])
     app.jobs.run("manual")
+    drain(app, clock)
     first, second = mentions(app)
     assert first["state"] == "sent" and [s["text"] for s in app.x.sent] == ["ありがとう1"]
     assert second["state"] == "pending" and second["draft_text"] == "ありがとう2" and "自動送信の上限" in second["actions"][0]["detail"]
@@ -246,19 +263,23 @@ def test_send_reply_respects_overall_daily_limit(app, clock):
     only_rule(app, categories=["fan"], actions=[{"type": "send_reply", "source": "template"}])
     app.x.add_mentions(["可愛い"])
     app.jobs.run("manual")
+    assert mentions(app)[0]["state"] == "send_queued"                                # キューには入る
+    key = "autosent#" + jst_date(clock())
+    drain(app, clock)
     m = mentions(app)[0]
-    assert app.x.sent == [] and m["state"] == "pending" and "上限" in m["actions"][0]["detail"]
-    assert app.repo.get("state", "autosent#" + jst_date(clock()))["count"] == 0   # 送れなかった分は、自動送信の枠に数えない
+    assert app.x.sent == [] and m["state"] == "review" and "上限" in m["error"]         # 送る時に、全体の上限で止まり、人に戻る
+    assert app.repo.get("state", key)["count"] == 0   # 送れなかった分は、自動送信の枠に数えない
 
 
-def test_send_reply_unknown_result_is_not_retried(app):
+def test_send_reply_unknown_result_is_not_retried(app, clock):
     connect_and_start(app)
     only_rule(app, categories=["fan"], actions=[{"type": "send_reply", "source": "template"}])
     app.x.fail_next_create = "unknown"
     app.x.add_mentions(["可愛い"])
     app.jobs.run("manual")
+    drain(app, clock)
     m = mentions(app)[0]
-    assert m["state"] == "unknown" and len(app.x.sent) == 0 and m["actions"][0]["ok"] is False
+    assert m["state"] == "unknown" and len(app.x.sent) == 0 and not app.sendq.queued()   # 結果不明は、再送しない
 
 
 # ---------- 自投稿の数値（いいね数など） ----------

@@ -137,6 +137,10 @@ aws cloudformation update-stack --region ap-northeast-1 --stack-name xronix-boot
 aws cloudformation wait stack-update-complete --region ap-northeast-1 --stack-name xronix-bootstrap
 ```
 
+### 送信キューについて
+
+自動送信は、送信キューに入り、設定の間隔（既定120秒 ± 60秒）で、1件ずつ送られます（ジョブ画面の「送信キュー」）。次の送信の時刻は、EventBridge Schedulerに、秒単位で登録されます。追加のAWSリソースや権限は要りません（定期処理と同じ仕組み）。
+
 ## 以後の運用
 
 | やりたいこと | 方法 |

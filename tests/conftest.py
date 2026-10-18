@@ -92,11 +92,12 @@ class FakeControl:
 
 class FakeScheduler:
     """次回実行の登録を記録する。"""
-    def __init__(self): self.armed, self.cancelled, self.fail = [], [], False
-    def arm(self, when):
+    def __init__(self): self.armed, self.cancelled, self.fail, self.payloads = [], [], False, []
+    def arm(self, when, payload=None):
         if self.fail:
             raise RuntimeError("scheduler down")
         self.armed.append(when)
+        self.payloads.append(payload)
         return f"sched-{len(self.armed)}"
     def cancel(self, name): self.cancelled.append(name)
 

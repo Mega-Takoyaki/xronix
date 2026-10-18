@@ -82,7 +82,7 @@ $("#kill").addEventListener("click", async () => {
 });
 
 // ---------- 承認待ち・履歴 ----------
-const STATE = { pending: "承認待ち", review: "要確認", failed: "送信失敗", unknown: "結果不明", sending: "送信中", sent: "送信済み", rejected: "却下", spam: "スパム", blocked: "ブロック対象", done: "対応済み（自動）" };
+const STATE = { pending: "承認待ち", review: "要確認", failed: "送信失敗", unknown: "結果不明", sending: "送信中", send_queued: "送信待ち（キュー）", sent: "送信済み", rejected: "却下", spam: "スパム", blocked: "ブロック対象", done: "対応済み（自動）" };
 
 function actionsView(m) {
   if (!m.actions || !m.actions.length) return null;
@@ -104,6 +104,11 @@ function mentionCard(m, queue) {
       h("div", { class: "row end" },
         h("button", { onclick: () => resolve(m.id, "sent") }, "送信済みだった"),
         h("button", { onclick: () => resolve(m.id, "not_sent") }, "送信されていなかった")));
+    return card;
+  }
+  if (m.state === "send_queued") {
+    card.append(h("div", { class: "muted" }, `送信待ちの返信（${m.queue_auto ? "自動送信" : "承認済み"}。送信キューの間隔をあけて、順に送ります）`), h("div", { class: "quote" }, m.queued_text || ""),
+      h("div", { class: "row end" }, h("button", { onclick: async () => { await act(() => api("POST", "/api/sendq/cancel", { id: m.id }), "キューから外しました（承認待ちに戻しました）", "info"); await refreshStatus(); render(); } }, "キューから外す")));
     return card;
   }
   if (!queue) {
@@ -233,6 +238,19 @@ async function renderJobs() {
         if (!confirm("取得位置をリセットし、次の実行で過去のメンションも取り込みます。\n\n・取り込み件数が多くなり、Xの読み取り費用が増えます（約$0.001／件）\n・自動送信のルールが有効だと、まとめて送信される恐れがあります\n\n本当に実行しますか？")) return;
         if (await act(() => api("POST", "/api/jobs/reset-cursor", { mode: "backfill" }), "リセットしました（次回は過去分も取り込みます）", "warn")) renderJobs();
       } }, "過去分も取り込むようにやり直す")));
+  const sq = await api("GET", "/api/sendq");
+  const qInt = h("input", { type: "number", min: 10, max: 3600 }); qInt.value = sq.settings.queue_interval_seconds;
+  const qJit = h("input", { type: "number", min: 0, max: 1800 }); qJit.value = sq.settings.queue_jitter_seconds;
+  const qManual = h("input", { type: "checkbox", checked: sq.settings.manual_via_queue });
+  const sendq = h("div", { class: "card" }, h("h3", {}, "送信キュー", tip("自動送信（と、設定すれば承認からの送信）は、すぐには送らず、キューに入れて、間隔をあけて1件ずつ送ります。短時間に続けて送ると、スパムとみなされたり、表示が制限されたりする恐れがあるためです。間隔は、設定した秒数に、ランダムな幅（秒）を加えて決めます。")),
+    h("div", { class: "row" },
+      h("div", { class: "grow" }, lbl("送信の間隔（秒）", "10〜3600秒。前の送信から、この秒数あとに、次の1件を送ります。"), qInt),
+      h("div", { class: "grow" }, lbl("ランダムな幅（秒）", "0〜1800秒。間隔を、この秒数以内で、前後にランダムにずらします（秒まで）。0ならずらしません。"), qJit)),
+    h("label", { class: "inline", style: "margin-top:8px" }, qManual, "承認からの送信も、キューに入れる", tip("オフ（既定）では、画面やTelegramで承認した返信は、すぐ送ります。オンにすると、承認した返信も、キューに入れて、間隔をあけて送ります。")),
+    h("div", { class: "row end", style: "margin:8px 0" }, h("button", { onclick: async () => { await act(() => api("PUT", "/api/settings/send", { queue_interval_seconds: Number(qInt.value), queue_jitter_seconds: Number(qJit.value), manual_via_queue: qManual.checked }), "保存しました"); renderJobs(); } }, "保存")),
+    sq.queued.length ? h("div", {}, h("div", { class: "muted" }, `送信待ち ${sq.queued.length}件。次の送信予定: ${fmtSec(sq.next_at)}${sq.last_sent_at ? `（前回の送信: ${fmtSec(sq.last_sent_at)}）` : ""}`),
+      h("table", {}, sq.queued.map((q, i) => h("tr", {}, h("td", {}, `${i + 1}`), h("td", { style: "word-break:break-all" }, q.text), h("td", {}, q.auto ? "自動" : "承認済み"),
+        h("td", {}, h("button", { class: "danger", onclick: async () => { await act(() => api("POST", "/api/sendq/cancel", { id: q.id }), "キューから外しました（承認待ちに戻しました）", "info"); renderJobs(); } }, "外す")))))) : h("div", { class: "muted" }, `送信待ちはありません${sq.last_sent_at ? `（前回の送信: ${fmtSec(sq.last_sent_at)}）` : ""}`));
   const diag = h("div", { class: "card" }, h("h3", {}, "取得の診断", tip("取りこぼしの調査用です。投稿のURL（またはID）を入れると、その投稿をXから読み、返信先・本文の@・取り込み状況・取得位置との関係から、「なぜ取り込まれないか」を表示します。読み取りの費用は、1回約$0.005〜0.01です。「取り込む」を押すと、通常の取り込みと同じ処理（ルールも動く）で、承認待ちか履歴に入れます。")),
     h("div", { class: "row" }, h("div", { class: "grow" }, h("input", { type: "text", id: "diag-input", placeholder: "https://x.com/…/status/… または 投稿のID" })),
       h("button", { onclick: async (e) => { e.target.disabled = true; await runDiag(false); e.target.disabled = false; } }, "診断する"),
@@ -281,7 +299,7 @@ async function renderJobs() {
   const runs = h("div", { class: "card" }, h("h3", {}, "実行履歴"), d.runs.length ? h("table", {}, h("tr", {}, ["開始", "起動", "結果", "取得", "新規", "返信案", "概算費用", "メッセージ"].map((c) => h("th", {}, c))),
     d.runs.map((r) => h("tr", {}, h("td", {}, fmtSec(r.started_at)), h("td", {}, TRIGGER[r.trigger] || r.trigger), h("td", { class: r.status === "ok" ? "ok" : "err" }, r.status === "ok" ? "成功" : "失敗"),
       h("td", {}, r.fetched), h("td", {}, r.new), h("td", {}, r.drafted), h("td", {}, `$${r.est_cost_usd}`), h("td", {}, r.message)))) : h("div", { class: "muted" }, "まだ実行されていません"));
-  view.replaceChildren(...[ctl, diag, reset, dev, runs].filter(Boolean));
+  view.replaceChildren(...[ctl, sendq, diag, reset, dev, runs].filter(Boolean));
 }
 
 // ---------- 統計・ログ ----------

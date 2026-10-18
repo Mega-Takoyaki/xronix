@@ -94,6 +94,7 @@ def start_ticker(app: App, interval: int = 5) -> threading.Event:
         while not stop.wait(interval):
             try:
                 app.jobs.tick()
+                app.sendq.tick()
             except Exception as e:  # noqa: BLE001
                 app.logger.error("job", f"定期処理で例外: {type(e).__name__}")
 

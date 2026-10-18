@@ -14,6 +14,7 @@ from .rules import Rules
 from .sender import Sender
 from .settings import Settings
 from .templates import Templates
+from .sendqueue import SendQueue
 from .tokens import TokenManager
 from .xclient import LiveX, MockX
 
@@ -34,6 +35,7 @@ class App:
     sender: Sender
     rules: Rules
     engine: ActionEngine
+    sendq: SendQueue
     now: object = utcnow
 
     @property
@@ -56,9 +58,12 @@ def build(repo, secrets, x, http: Http | None = None, now=utcnow, sleep=None, sc
                    control_factory=control_factory, repo=repo, now=now)
     notifier = Notifier(settings, secrets, http, logger)
     sender = Sender(repo, settings, tokens, x, templates, logger, now)
-    engine = ActionEngine(repo, settings, x, tokens, ai, templates, notifier, sender, logger, now)
+    from .scheduler import NullScheduler
+    scheduler = scheduler or NullScheduler()
+    sendq = SendQueue(repo, settings, sender, scheduler, logger, now, rng)
+    engine = ActionEngine(repo, settings, x, tokens, ai, templates, notifier, sender, logger, now, sendq=sendq)
     jobs = JobRunner(repo, settings, tokens, x, ai, templates, notifier, logger, now, scheduler=scheduler, rng=rng, rules=rules, engine=engine)
-    return App(repo, secrets, settings, x, http, logger, templates, tokens, ai, notifier, jobs, sender, rules, engine, now)
+    return App(repo, secrets, settings, x, http, logger, templates, tokens, ai, notifier, jobs, sender, rules, engine, sendq, now)
 
 
 def build_local(data_dir: str = ".xronix", mode: str | None = None) -> App:

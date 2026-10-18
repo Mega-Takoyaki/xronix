@@ -21,8 +21,8 @@ def _res(t: str, ok: bool, detail: str) -> dict:
 
 
 class ActionEngine:
-    def __init__(self, repo, settings, x, tokens, ai, templates, notifier, sender, logger, now=utcnow):
-        self.repo, self.settings, self.x, self.tokens = repo, settings, x, tokens
+    def __init__(self, repo, settings, x, tokens, ai, templates, notifier, sender, logger, now=utcnow, sendq=None):
+        self.repo, self.settings, self.x, self.tokens, self.sendq = repo, settings, x, tokens, sendq
         self.ai, self.templates, self.notifier, self.sender, self.log, self.now = ai, templates, notifier, sender, logger, now
 
     def _count(self, name: str) -> str:
@@ -144,18 +144,17 @@ class ActionEngine:
             return _res(t, True, note + (f"。{why}" if why else ""))
         # 承認なしで送信する
         limit = self.settings.get("safety")["auto_daily_limit"]
-        if self.repo.incr("state", self._count("autosent"), "count", 1, max_value=limit) is None:
+        key = self._count("autosent")
+        if self.repo.incr("state", key, "count", 1, max_value=limit) is None:
             return _res(t, True, f"1日の自動送信の上限（{limit}件）に達したため、承認待ちに入れました")
         self.repo.put("mentions", item["id"], item)  # 送信の前に、状態を保存する
         try:
-            self.sender.send(item["id"], draft)
+            # すぐには送らず、送信キューに入れる。間隔（秒、ランダムな幅つき）をあけて、1件ずつ送る
+            self.sendq.enqueue(item["id"], draft, auto=True, autosent_key=key)
         except SendRefused as e:
-            self.repo.incr("state", self._count("autosent"), "count", -1)
+            self.repo.incr("state", key, "count", -1)
             item.update(self.repo.get("mentions", item["id"]) or {})
-            return _res(t, False, f"送信できなかったため、承認待ちに入れました: {e}")
-        except Exception as e:  # noqa: BLE001  送信の失敗（結果不明を含む）。状態はsenderが記録済み
-            item.update(self.repo.get("mentions", item["id"]) or {})
-            return _res(t, False, f"送信に失敗しました: {e}")
+            return _res(t, False, f"送信キューに入れられなかったため、承認待ちに入れました: {e}")
         item.update(self.repo.get("mentions", item["id"]) or {})
-        item["auto_sent"] = True
-        return _res(t, True, "承認なしで送信しました")
+        item["auto_queued"] = True
+        return _res(t, True, "送信キューに入れました（間隔をあけて、順に送信します）")

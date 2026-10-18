@@ -32,14 +32,14 @@ class Sender:
             raise SendRefused(f"文字数が上限を超えています（全角は2として{TWEET_LIMIT}まで）")
         return text
 
-    def send(self, mention_id: str, text: str) -> dict:
+    def send(self, mention_id: str, text: str, allow_queued: bool = False) -> dict:
         safety = self.settings.get("safety")
         if safety["kill_switch"]:
             raise SendRefused("緊急停止中のため送信できません")
         m = self.repo.get("mentions", mention_id)
         if not m:
             raise SendRefused("対象が見つかりません")
-        if m["state"] not in SENDABLE:
+        if m["state"] not in SENDABLE and not (allow_queued and m["state"] == "send_queued"):
             raise SendRefused(f"この状態では送信できません（{m['state']}）")
         if self.repo.get("blocklist", m["author_id"]):
             raise SendRefused("ブロック対象のユーザーです")

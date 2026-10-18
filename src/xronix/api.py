@@ -70,6 +70,8 @@ class Api:
             ("POST", r"/api/blocklist", self.add_block),
             ("DELETE", r"/api/blocklist/(?P<id>\w+)", self.del_block),
             ("GET", r"/api/auth-config", self.auth_config),
+            ("GET", r"/api/sendq", self.sendq_view),
+            ("POST", r"/api/sendq/cancel", self.sendq_cancel),
             ("GET", r"/api/jobs", self.jobs),
             ("POST", r"/api/jobs/run", self.run_job),
             ("POST", r"/api/jobs/reset-cursor", self.reset_cursor),
@@ -258,6 +260,7 @@ class Api:
         on = bool(b.get("on"))
         self.app.settings.update("safety", {"kill_switch": on})
         self.app.jobs.plan("kill")  # 停止中は予定を取り消し、解除すると再登録する
+        self.app.sendq.plan()
         self.app.logger.warn("safety", "緊急停止を" + ("有効にしました" if on else "解除しました"))
         return _ok({"kill_switch": on})
 
@@ -278,8 +281,20 @@ class Api:
         return _ok({"items": rows[:200]})
 
     def reply(self, q, b, id) -> Result:
+        if self.app.settings.get("send")["manual_via_queue"]:  # 承認からの送信も、キューに入れる設定
+            return _ok(self.app.sendq.enqueue(id, str(b.get("text", ""))))
         m = self.app.sender.send(id, str(b.get("text", "")))
         return _ok(m)
+
+    def sendq_view(self, q, b) -> Result:
+        a = self.app
+        items = [{"id": m["id"], "text": m.get("queued_text", ""), "author_id": m.get("author_id", ""), "queued_at": m.get("queued_at", ""),
+                  "auto": bool(m.get("queue_auto")), "rule_name": m.get("rule_name", ""), "kind_label": EVENT_LABELS.get(m.get("kind", ""), "")}
+                 for m in a.sendq.queued()]
+        return _ok({"settings": a.settings.get("send"), "queued": items, "next_at": a.sendq.next_at(), "last_sent_at": a.sendq.state()["last_sent_at"]})
+
+    def sendq_cancel(self, q, b) -> Result:
+        return _ok(self.app.sendq.cancel(str(b.get("id", ""))))
 
     def _get_mention(self, id):
         return self.app.repo.get("mentions", id)
