@@ -14,6 +14,7 @@ DEFAULTS: dict[str, dict] = {
             "metrics_interval_minutes": 360, "metrics_window_days": 7, "metrics_max_posts": 20, "wide_fetch": True, "verbose_log": True},
     "safety": {"kill_switch": False, "daily_limit": 10, "like_daily_limit": 20, "auto_daily_limit": 5,
                "conversation_reply_limit": 3, "author_daily_limit": 5},
+    "send": {"queue_interval_seconds": 120, "queue_jitter_seconds": 60, "manual_via_queue": False},
     "notify": {"telegram_enabled": False, "telegram_chat_id": "", "site_url": ""},
 }
 
@@ -25,6 +26,7 @@ SCHEMA: dict[str, dict[str, type]] = {
             "metrics_interval_minutes": int, "metrics_window_days": int, "metrics_max_posts": int, "wide_fetch": bool, "verbose_log": bool},
     "safety": {"kill_switch": bool, "daily_limit": int, "like_daily_limit": int, "auto_daily_limit": int,
                "conversation_reply_limit": int, "author_daily_limit": int},
+    "send": {"queue_interval_seconds": int, "queue_jitter_seconds": int, "manual_via_queue": bool},
     "notify": {"telegram_enabled": bool, "telegram_chat_id": str, "site_url": str},
 }
 
@@ -104,6 +106,11 @@ class Settings:
             for k, label in (("conversation_reply_limit", "同じ相手との会話の返信上限"), ("author_daily_limit", "同じ相手への1日の返信上限")):
                 if not 1 <= cur[k] <= 50:
                     raise ValidationError(f"{label}は1〜50で指定してください")
+        if section == "send":
+            if not 10 <= cur["queue_interval_seconds"] <= 3600:
+                raise ValidationError("送信の間隔は10〜3600秒で指定してください")
+            if not 0 <= cur["queue_jitter_seconds"] <= 1800:
+                raise ValidationError("送信の間隔のランダムな幅は0〜1800秒で指定してください（0でずらさない）")
         if section == "ai":
             if not re.fullmatch(r"[a-z]{2}(-[a-z]+)+-\d", cur["bedrock_region"]):
                 raise ValidationError("Bedrockのリージョンは ap-northeast-1 のような形式で指定してください")

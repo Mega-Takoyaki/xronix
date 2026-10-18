@@ -357,7 +357,10 @@ def test_lambda_handlers_end_to_end(monkeypatch):
         assert lh.job_handler({"watchdog": True})["ran"] is False
         # 予定が過ぎていれば実行する（未接続なのでerrorとして記録される）
         lh._api.app.repo.update_if("state", "job", {"next_run_at": "2000-01-01T00:00:00.000Z"})
-        assert lh.job_handler({"source": "schedule"}) == {"ran": True, "status": "error"}
+        r = lh.job_handler({"source": "schedule"})
+        assert r["ran"] is True and r["status"] == "error" and r["queue_sent"] is False
+        assert lh.job_handler({"source": "sendqueue"}) == {"queue_sent": False}                      # 送信キューの予定時刻（キューは空）
+        assert lh.job_handler({"watchdog": True})["queue_sent"] is False
         lh._api = None
 
 

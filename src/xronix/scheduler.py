@@ -11,14 +11,14 @@ from typing import Protocol
 
 
 class JobScheduler(Protocol):
-    def arm(self, when: datetime) -> str: ...
+    def arm(self, when: datetime, payload: dict | None = None) -> str: ...
     def cancel(self, name: str) -> None: ...
 
 
 class NullScheduler:
     """何も登録しない（ローカル。開発サーバの定期確認が時刻を見て実行する）。"""
 
-    def arm(self, when: datetime) -> str:
+    def arm(self, when: datetime, payload: dict | None = None) -> str:
         return ""
 
     def cancel(self, name: str) -> None:
@@ -32,7 +32,7 @@ class AwsScheduler:
         self._c = client or boto3.client("scheduler")
         self.job_arn, self.role_arn, self.prefix, self.group = job_arn, role_arn, prefix, group
 
-    def arm(self, when: datetime) -> str:
+    def arm(self, when: datetime, payload: dict | None = None) -> str:
         """指定時刻（秒単位）に1回だけジョブを起動するスケジュールを作る。実行後は自動で削除される。"""
         when = when.astimezone(timezone.utc)
         name = f"{self.prefix}-next-{int(when.timestamp())}-{pysecrets.token_hex(2)}"
@@ -42,7 +42,7 @@ class AwsScheduler:
             ScheduleExpressionTimezone="UTC",
             FlexibleTimeWindow={"Mode": "OFF"},
             ActionAfterCompletion="DELETE",
-            Target={"Arn": self.job_arn, "RoleArn": self.role_arn, "Input": json.dumps({"source": "schedule"}),
+            Target={"Arn": self.job_arn, "RoleArn": self.role_arn, "Input": json.dumps(payload or {"source": "schedule"}),
                     "RetryPolicy": {"MaximumRetryAttempts": 0, "MaximumEventAgeInSeconds": 60}},
         )
         return name
